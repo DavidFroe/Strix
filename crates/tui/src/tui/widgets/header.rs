@@ -422,7 +422,10 @@ impl<'a> HeaderWidget<'a> {
     }
 
     fn metadata_spans(&self, max_width: usize) -> Vec<Span<'static>> {
-        let workspace = self.data.workspace_name.trim();
+        // Strix: pwd/workspace wird im Info-Kasten angezeigt — im Header doppelt
+        // sich das. Außerdem war die Anzeige modus-abhängig inkonsistent
+        // (manche Mode-Kombinationen zeigten sie, andere nicht). Komplett raus.
+        let workspace = "";
         let model = self.data.model.trim();
         let sub = self
             .data

@@ -1,0 +1,19 @@
+tooltip
+Tipp: Gib '/' ein für erweiterte Funktionen
+Tipp: Tab wechselt zwischen Modi (Agent / Plan / Yolo)
+Tipp: Ctrl+Tab cycelt durchs Modell-Preset
+Tipp: '/model <name>' wechselt das Modell mitten in der Session
+Tipp: '/spec' zeigt den Vibecoding-Plan, '/tagebuch' das Session-Log
+Tipp: '/queue' reiht Nachrichten in eine Warteschlange ein
+Tipp: '/context' öffnet den aktiven Projekt-Kontext
+Tipp: Esc zwei Mal drücken = Backtrack zur vorigen Antwort
+Tipp: Shift+Tab zeigt verfügbare Slash-Commands
+Tipp: '@dateiname' fügt Dateien als Kontext hinzu
+Tipp: Modelle wechseln kostet kein Geld — probier ruhig durch
+Tipp: '/models' listet alle aktuell verfügbaren Modelle
+Tipp: Im Plan-Modus passiert nichts Reales — sicher zum Vordenken
+Tipp: Yolo-Modus = Auto-Approve, fragt bei nichts nach
+Tipp: Strix kann auch Bilder lesen — einfach reinpasten
+Tipp: Ctrl+E öffnet den externen Editor für lange Eingaben
+Tipp: '/compact' fasst alte Turns zusammen wenn Kontext voll wird
+Tipp: '/help' zeigt alle Tastenkombinationen

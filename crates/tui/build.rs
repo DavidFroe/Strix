@@ -15,6 +15,25 @@ fn main() {
         .unwrap_or_else(|| package_version.to_string());
 
     println!("cargo:rustc-env=DEEPSEEK_BUILD_VERSION={build_version}");
+
+    // Strix-Build-Counter: Anzahl Commits = monoton wachsende Build-Nr.
+    // Fällt zurück auf 0, wenn git nicht verfügbar (z.B. crates.io-Build).
+    let build_number = git_commit_count().unwrap_or(0);
+    println!("cargo:rustc-env=STRIX_BUILD_NUMBER={build_number}");
+}
+
+fn git_commit_count() -> Option<u64> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new("git")
+        .args(["-C"])
+        .arg(&manifest_dir)
+        .args(["rev-list", "--count", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 /// Tell Cargo to invalidate the cached build script output when `HEAD`

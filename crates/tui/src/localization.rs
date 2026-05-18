@@ -1098,7 +1098,7 @@ fn translation(locale: Locale, id: MessageId) -> Option<&'static str> {
 
 fn german(id: MessageId) -> Option<&'static str> {
     Some(match id {
-        MessageId::ComposerPlaceholder => "Sag was Propellert werden soll? Für erweiterte Programmfunktionen bitte \"/\" eingeben!",
+        MessageId::ComposerPlaceholder => "Was soll Strix tun?",
         MessageId::HistorySearchPlaceholder => "Prompt-Verlauf durchsuchen...",
         MessageId::HistorySearchTitle => "Verlaufsuche",
         MessageId::HistoryHintMove => "Auf/Ab bewegen",
@@ -1353,7 +1353,7 @@ fn german(id: MessageId) -> Option<&'static str> {
         MessageId::LinksTip => "Tipp: API-Schlüssel sind im Dashboard verfügbar.",
         MessageId::SubagentsFetching => "Subagenten-Status wird abgerufen...",
         MessageId::HelpUnknownCommand => "Unbekannter Befehl: {topic}",
-        MessageId::HomeDashboardTitle => "Propeller Startseite",
+        MessageId::HomeDashboardTitle => "Strix Startseite",
         MessageId::HomeModel => "Modell:",
         MessageId::HomeMode => "Modus:",
         MessageId::HomeWorkspace => "Arbeitsbereich:",

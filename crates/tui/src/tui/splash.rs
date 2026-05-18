@@ -3,31 +3,32 @@ use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const BUILD_NUMBER_STR: &str = env!("STRIX_BUILD_NUMBER");
 
 const SPLASH_DURATION: Duration = Duration::from_secs(3);
 /// Minimum time the splash is shown before a keypress can dismiss it.
 const SPLASH_MIN_MS: u128 = 600;
 
-// ASCII "STRIX" in dem klassischen Pixel-Block-Stil. Width ≈ 33 cols.
+// ASCII "STRIX" — ANSI Shadow Stil (Standard Figlet). Width = 36 cols.
 const LOGO_LINES: &[&str] = &[
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2557}",
-    "  \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d} \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{2550}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255d}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2551}\u{255a}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{255d}",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}    \u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2554}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d} ",
-    "  \u{255a}\u{2550}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{255a}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551} \u{2588}\u{2588}\u{2554}\u{2588}\u{2588}\u{2557} ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{255d} \u{2588}\u{2588}\u{2557}",
-    "  \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d} \u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{255d}\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{255d}",
+    "███████╗████████╗██████╗ ██╗██╗  ██╗",
+    "██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝",
+    "███████╗   ██║   ██████╔╝██║ ╚███╔╝ ",
+    "╚════██║   ██║   ██╔══██╗██║ ██╔██╗ ",
+    "███████║   ██║   ██║  ██║██║██╔╝ ██╗",
+    "╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝",
 ];
 
-// Owl pixel-art (Strix-Mascot). Rendered statt der rotierenden Propeller.
+// Owl pixel-art (Strix-Mascot). Klare Augen (◉) + Schnabel (▼).
 // Compact 7-row design um in den verfügbaren Splash-Slot zu passen.
 const OWL_LINES: &[&str] = &[
-    "     \u{2584}\u{2584}\u{2588}\u{2580}\u{2588}\u{2588}\u{2588}\u{2580}\u{2588}\u{2584}\u{2584}     ",
-    "    \u{2588} \u{2580} \u{2588} \u{2588} \u{2580} \u{2588}    ",
-    "    \u{2588}\u{2588}\u{2588}\u{2580}\u{2588}\u{2588}\u{2588}\u{2580}\u{2588}\u{2588}\u{2588}    ",
-    "    \u{2588}\u{2588}\u{2588}\u{2588} \u{25cf} \u{2588}\u{2588}\u{2588}\u{2588}    ",
-    "    \u{255a}\u{2588}\u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}\u{255d}    ",
-    "     \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{255d}     ",
-    "      \u{2580}\u{2580}\u{2580}\u{2580}\u{2580}      ",
+    "     ▄▄█▀███▀█▄▄     ",
+    "    █ ◉ █ █ ◉ █    ",
+    "    ███▀███▀███    ",
+    "    ████ ▼ ████    ",
+    "    ╚███▄▄▄███╝    ",
+    "     ╚███████╝     ",
+    "      ▀▀▀▀▀      ",
 ];
 
 // ── Propeller geometry ────────────────────────────────────────────────────────
@@ -321,7 +322,8 @@ impl SplashScreen {
         }
 
         // Version string — right-aligned under logo, in blank row before propeller
-        let ver_str = format!("v{VERSION}");
+        let build_n: u64 = BUILD_NUMBER_STR.parse().unwrap_or(0);
+        let ver_str = format!("v{VERSION}  Build #{build_n:03}");
         if row < area.bottom() {
             let vx = ox + content_w.saturating_sub(ver_str.len() as u16);
             buf.set_string(vx, row, &ver_str,
@@ -493,7 +495,7 @@ fn parse_quote_response(state: &InferenceState, elapsed_ms: u128) -> (Option<Str
         InferenceState::Failed(err) => {
             let short = err.lines().next().unwrap_or(err).trim();
             let msg = format!("\u{26a0}  Modell-Inferenz fehlgeschlagen: {short}");
-            (Some(msg), Some("Tipp: propeller model main <modelname>  |  propeller models".to_string()), None)
+            (Some(msg), Some("Tipp: strix model main <modelname>  |  strix models".to_string()), None)
         }
         InferenceState::Success { quote, attribution, greeting } => {
             let quote_str  = format!("\u{201e}{quote}\u{201c}");

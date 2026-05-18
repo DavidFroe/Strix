@@ -604,22 +604,31 @@ impl Renderable for ComposerWidget<'_> {
                 && self.mention_menu_entries.is_empty()
                 && !self.app.is_history_search_active()
             {
-                Some(Line::from(vec![
-                    Span::styled(
-                        " Tipp: Gib ",
+                // Composer-leer → rotierender Tooltip aus strix_tooltips.csv.
+                // Rotiert nach jedem Submit (siehe App::advance_tooltip).
+                // Empty-Pool-Fallback: alter hardcoded "/ ein"-Hint.
+                let tip = self.app.current_tooltip();
+                let line = if tip.is_empty() {
+                    Line::from(vec![
+                        Span::styled(" Tipp: Gib ", Style::default().fg(palette::TEXT_MUTED)),
+                        Span::styled(
+                            "'/'",
+                            Style::default()
+                                .fg(palette::MODE_PROPELLER)
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " ein für erweiterte Funktionen ",
+                            Style::default().fg(palette::TEXT_MUTED),
+                        ),
+                    ])
+                } else {
+                    Line::from(Span::styled(
+                        format!(" {tip} "),
                         Style::default().fg(palette::TEXT_MUTED),
-                    ),
-                    Span::styled(
-                        "'/'",
-                        Style::default()
-                            .fg(palette::MODE_PROPELLER)
-                            .add_modifier(ratatui::style::Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        " ein für erweiterte Funktionen ",
-                        Style::default().fg(palette::TEXT_MUTED),
-                    ),
-                ]).right_aligned())
+                    ))
+                };
+                Some(line.right_aligned())
             } else {
                 None
             };
@@ -1931,9 +1940,19 @@ fn build_empty_state_lines(app: &App, area: Rect) -> Vec<Line<'static>> {
 
         lines.push(Line::from(""));
 
-        // Greeting — wrap to full body width; fall back to "-Kein Kommentar-".
-        let greeting_text = if greeting.is_empty() { "-Kein Kommentar-" } else { greeting.as_str() };
-        for wrapped in wrap_to_width(greeting_text, body_width) {
+        // Greeting — "{Modellname} meint dazu: …" prefix, dann wort-gewrappt.
+        // Modellname kommt aus presets[0] (dem initialen Kommentar-Modell);
+        // fall back zu app.model wenn Presets leer.
+        let model_friendly = app.presets.first()
+            .map(|p| p.name.as_str())
+            .unwrap_or(app.model.as_str());
+        let prefix = format!("{model_friendly} meint dazu: ");
+        let greeting_text = if greeting.is_empty() {
+            "-Kein Kommentar-".to_string()
+        } else {
+            format!("{prefix}{greeting}")
+        };
+        for wrapped in wrap_to_width(&greeting_text, body_width) {
             lines.push(Line::from(Span::styled(
                 format!("{inset}{wrapped}"),
                 Style::default().fg(Color::Rgb(100, 210, 180)),

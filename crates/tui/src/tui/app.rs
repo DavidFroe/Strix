@@ -1255,7 +1255,7 @@ fn pick_strix_placeholder() -> String {
         .filter(|l| !l.is_empty())
         .collect();
     if prompts.is_empty() {
-        return "Sag was Propellert werden soll?".to_string();
+        return "Was soll Strix tun?".to_string();
     }
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1263,6 +1263,18 @@ fn pick_strix_placeholder() -> String {
         .unwrap_or(42);
     let idx = (seed as usize) % prompts.len();
     prompts[idx].to_string()
+}
+
+/// Pool von Tooltips aus `strix_tooltips.csv`. Wird beim App-Start einmal
+/// geladen; rotiert nach jedem Composer-Submit via `App::advance_tooltip()`.
+fn load_strix_tooltips() -> Vec<String> {
+    const CSV: &str = include_str!("../../../../strix_tooltips.csv");
+    CSV.lines()
+        .skip(1)
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 const MAX_SUBMITTED_INPUT_CHARS: usize = 16_000;
@@ -1919,6 +1931,11 @@ pub struct App {
     pub presets: Vec<ModelPreset>,
     /// Index of the currently active preset (`usize::MAX` = no preset active yet).
     pub current_preset_idx: usize,
+
+    /// Tooltip-Pool aus `strix_tooltips.csv`. Composer-Hint-Zeile rotiert
+    /// nach jedem Submit durch diesen Pool.
+    pub strix_tooltips: Vec<String>,
+    pub current_tooltip_idx: usize,
 
     /// Startup splash screen shown for 3 s at launch (interactive TUI only).
     pub splash: Option<crate::tui::splash::SplashScreen>,
@@ -2635,6 +2652,8 @@ impl App {
             last_input_at: std::time::Instant::now(),
             presets: strix_presets,
             current_preset_idx: 0,
+            strix_tooltips: load_strix_tooltips(),
+            current_tooltip_idx: 0,
         }
     }
 
@@ -4690,7 +4709,27 @@ impl App {
         // Rotate placeholder on every submit so the composer always shows a
         // fresh prompt from strix_prompts.csv.
         self.strix_placeholder = pick_strix_placeholder();
+        // Same idea for the Composer-Hint: rotiert durch strix_tooltips.csv,
+        // damit der User über die Zeit verschiedene Tipps sieht.
+        self.advance_tooltip();
         Some(input)
+    }
+
+    /// Aktueller Tooltip aus strix_tooltips.csv (rotiert via advance_tooltip).
+    /// Empty string wenn der Pool leer ist (CSV nicht geladen) — Render-Code
+    /// soll dann auf den Default-Hardcoded-Tipp zurückfallen.
+    pub fn current_tooltip(&self) -> &str {
+        if self.strix_tooltips.is_empty() {
+            return "";
+        }
+        let idx = self.current_tooltip_idx % self.strix_tooltips.len();
+        &self.strix_tooltips[idx]
+    }
+
+    pub fn advance_tooltip(&mut self) {
+        if !self.strix_tooltips.is_empty() {
+            self.current_tooltip_idx = self.current_tooltip_idx.wrapping_add(1);
+        }
     }
 
     /// Composer-Enter dispatch. Returns `Some(input)` when the press should
