@@ -61,9 +61,13 @@ docs/*.pdf
 
 # Note: Cargo.lock is intentionally NOT ignored for reproducible builds
 
-# Local dev scripts and temp files
+# Local dev scripts and temp files. *.sh default-ignored damit lokale Helfer
+# (claude.sh, git_up.sh, transfer.sh) nicht aus Versehen ins Public-Repo gehen.
+# Build/Run-Infrastruktur explizit unignored.
 *.sh
 !scripts/**
+!make.sh
+!start.sh
 test.txt
 TODO*.md
 todo*.md
