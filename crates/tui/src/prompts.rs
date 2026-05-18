@@ -148,6 +148,8 @@ pub const AGENT_MODE: &str = include_str!("prompts/modes/agent.md");
 pub const PLAN_MODE: &str = include_str!("prompts/modes/plan.md");
 pub const YOLO_MODE: &str = include_str!("prompts/modes/yolo.md");
 pub const PROPELLER_MODE: &str = include_str!("prompts/modes/propeller.md");
+pub const CHAT_MODE: &str = include_str!("prompts/modes/chat.md");
+pub const SHELL_MODE: &str = include_str!("prompts/modes/shell.md");
 
 /// Approval-policy overlays — whether tool calls are auto-approved,
 /// require confirmation, or are blocked.
@@ -205,9 +207,11 @@ impl Personality {
 
 fn mode_prompt(mode: AppMode) -> &'static str {
     match mode {
-        AppMode::Agent => AGENT_MODE,
-        AppMode::Yolo => YOLO_MODE,
+        AppMode::Chat => CHAT_MODE,
         AppMode::Plan => PLAN_MODE,
+        AppMode::Agent => AGENT_MODE,
+        AppMode::Shell => SHELL_MODE,
+        AppMode::Yolo => YOLO_MODE,
         AppMode::Propeller => PROPELLER_MODE,
     }
 }
@@ -215,15 +219,17 @@ fn mode_prompt(mode: AppMode) -> &'static str {
 fn default_approval_mode_for_mode(mode: AppMode) -> ApprovalMode {
     match mode {
         AppMode::Agent => ApprovalMode::Suggest,
+        AppMode::Shell => ApprovalMode::Auto,        // Bash auto, sudo wird im prompt manuell confirmed
         AppMode::Yolo | AppMode::Propeller => ApprovalMode::Auto,
         AppMode::Plan => ApprovalMode::Never,
+        AppMode::Chat => ApprovalMode::Never,
     }
 }
 
 fn approval_prompt_for_mode(mode: AppMode, approval_mode: ApprovalMode) -> &'static str {
     match mode {
-        AppMode::Yolo | AppMode::Propeller => AUTO_APPROVAL,
-        AppMode::Plan => NEVER_APPROVAL,
+        AppMode::Shell | AppMode::Yolo | AppMode::Propeller => AUTO_APPROVAL,
+        AppMode::Plan | AppMode::Chat => NEVER_APPROVAL,
         AppMode::Agent => match approval_mode {
             ApprovalMode::Auto => AUTO_APPROVAL,
             ApprovalMode::Suggest => SUGGEST_APPROVAL,

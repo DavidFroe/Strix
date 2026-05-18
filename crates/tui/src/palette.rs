@@ -230,6 +230,8 @@ pub const MODE_AGENT: Color = Color::Rgb(80, 150, 255); // Bright blue
 pub const MODE_YOLO: Color = Color::Rgb(255, 100, 100); // Warning red
 pub const MODE_PLAN: Color = Color::Rgb(255, 170, 60);  // Orange
 pub const MODE_PROPELLER: Color = Color::Rgb(0, 200, 255); // Propeller cyan-blue
+pub const MODE_CHAT: Color = Color::Rgb(160, 180, 200); // Soft grey-blue (passive)
+pub const MODE_SHELL: Color = Color::Rgb(140, 220, 120); // Green (terminal-feel)
 
 pub const SELECTION_BG: Color = Color::Rgb(26, 44, 74);
 #[allow(dead_code)]
@@ -275,11 +277,13 @@ pub struct UiTheme {
     pub selection_bg: Color,
     pub header_bg: Color,
     pub footer_bg: Color,
-    /// Statusline mode colors (agent/yolo/plan/propeller)
+    /// Statusline mode colors (chat/plan/agent/shell/yolo/propeller)
     pub mode_agent: Color,
     pub mode_yolo: Color,
     pub mode_plan: Color,
     pub mode_propeller: Color,
+    pub mode_chat: Color,
+    pub mode_shell: Color,
     /// Statusline status colors
     pub status_ready: Color,
     pub status_working: Color,
@@ -307,6 +311,8 @@ pub const UI_THEME: UiTheme = UiTheme {
     mode_yolo: MODE_YOLO,
     mode_plan: MODE_PLAN,
     mode_propeller: MODE_PROPELLER,
+    mode_chat: MODE_CHAT,
+    mode_shell: MODE_SHELL,
     status_ready: TEXT_MUTED,
     status_working: DEEPSEEK_SKY,
     status_warning: STATUS_WARNING,
@@ -332,6 +338,8 @@ pub const LIGHT_UI_THEME: UiTheme = UiTheme {
     mode_yolo: DEEPSEEK_RED,
     mode_plan: Color::Rgb(180, 83, 9),
     mode_propeller: Color::Rgb(0, 160, 220),
+    mode_chat: Color::Rgb(110, 130, 150),
+    mode_shell: Color::Rgb(60, 150, 60),
     status_ready: LIGHT_TEXT_MUTED,
     status_working: DEEPSEEK_BLUE,
     status_warning: Color::Rgb(180, 83, 9),

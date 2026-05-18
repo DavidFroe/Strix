@@ -366,9 +366,12 @@ pub fn home_dashboard(app: &mut App) -> CommandResult {
             let _ = writeln!(stats, "{}", tr(locale, MessageId::HomeAgentModeReviewTip));
             let _ = writeln!(stats, "{}", tr(locale, MessageId::HomeAgentModeYoloTip));
         }
-        AppMode::Yolo | AppMode::Propeller => {
+        AppMode::Shell | AppMode::Yolo | AppMode::Propeller => {
             let _ = writeln!(stats, "{}", tr(locale, MessageId::HomeYoloModeTip));
             let _ = writeln!(stats, "{}", tr(locale, MessageId::HomeYoloModeCaution));
+        }
+        AppMode::Chat => {
+            let _ = writeln!(stats, "Chat-Modus — reine Konversation, kein Tool-Use.");
         }
         AppMode::Plan => {
             let _ = writeln!(stats, "{}", tr(locale, MessageId::HomePlanModeTip));

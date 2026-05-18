@@ -21,14 +21,14 @@ use crate::sandbox::SandboxPolicy;
 /// - **YOLO**: `DangerFullAccess` — explicit no-guardrails contract.
 pub(crate) fn sandbox_policy_for_mode(mode: AppMode, workspace: &Path) -> SandboxPolicy {
     match mode {
-        AppMode::Plan => SandboxPolicy::ReadOnly,
+        AppMode::Chat | AppMode::Plan => SandboxPolicy::ReadOnly,
         AppMode::Agent => SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![workspace.to_path_buf()],
             network_access: true,
             exclude_tmpdir: false,
             exclude_slash_tmp: false,
         },
-        AppMode::Yolo | AppMode::Propeller => SandboxPolicy::DangerFullAccess,
+        AppMode::Shell | AppMode::Yolo | AppMode::Propeller => SandboxPolicy::DangerFullAccess,
     }
 }
 

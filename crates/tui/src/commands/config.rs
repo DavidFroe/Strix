@@ -569,10 +569,12 @@ fn parse_mode_arg(arg: &str) -> Option<AppMode> {
 
 fn mode_display_name(mode: AppMode) -> &'static str {
     match mode {
-        AppMode::Agent => "Agent",
+        AppMode::Chat => "Chat",
         AppMode::Plan => "Plan",
+        AppMode::Agent => "Agent",
+        AppMode::Shell => "Shell",
         AppMode::Yolo => "YOLO",
-        AppMode::Propeller => "Propeller",
+        AppMode::Propeller => "Auto",
     }
 }
 

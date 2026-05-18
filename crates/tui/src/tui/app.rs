@@ -114,13 +114,23 @@ pub struct ModelPreset {
 }
 
 /// Supported application modes for the TUI.
+///
+/// Cycle (Tab): Chat → Plan → Agent → Shell → Yolo → Auto → Chat
+///
+/// - Chat: pure Konversation, kein Tool-Use
+/// - Plan: Pläne erstellen, autonom recherchieren (Read-only Tools)
+/// - Agent: normaler Agent mit Approval-Gates
+/// - Shell: Shell-fokussiert, Auto-Approve außer bei sudo (fragt)
+/// - Yolo: Killer-Modus — sudo + alles ohne Rückfragen
+/// - Propeller (User-facing: "Auto"): Übermoodus mit max-Reasoning
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
-    Agent,
-    Yolo,
+    Chat,
     Plan,
-    /// Propeller mode — auto-approves all tools (like Yolo) but displayed in
-    /// blue with the Propeller brand identity.
+    Agent,
+    Shell,
+    Yolo,
+    /// Auto-Modus (Code-Name historisch "Propeller"). Auto-approve + max-reasoning.
     Propeller,
 }
 
@@ -1284,9 +1294,11 @@ impl AppMode {
     #[must_use]
     pub fn from_setting(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
+            "chat" => Self::Chat,
             "plan" => Self::Plan,
+            "shell" => Self::Shell,
             "yolo" => Self::Yolo,
-            "propeller" => Self::Propeller,
+            "propeller" | "auto" => Self::Propeller,
             _ => Self::Agent,
         }
     }
@@ -1294,9 +1306,11 @@ impl AppMode {
     #[must_use]
     pub fn as_setting(self) -> &'static str {
         match self {
-            Self::Agent => "agent",
-            Self::Yolo => "yolo",
+            Self::Chat => "chat",
             Self::Plan => "plan",
+            Self::Agent => "agent",
+            Self::Shell => "shell",
+            Self::Yolo => "yolo",
             Self::Propeller => "propeller",
         }
     }
@@ -1304,10 +1318,12 @@ impl AppMode {
     /// Short label used in the UI footer.
     pub fn label(self) -> &'static str {
         match self {
-            AppMode::Agent => "AGENT",
-            AppMode::Yolo => "YOLO",
+            AppMode::Chat => "CHAT",
             AppMode::Plan => "PLAN",
-            AppMode::Propeller => "PROPELLER",
+            AppMode::Agent => "AGENT",
+            AppMode::Shell => "SHELL",
+            AppMode::Yolo => "YOLO",
+            AppMode::Propeller => "AUTO",
         }
     }
 
@@ -1315,10 +1331,12 @@ impl AppMode {
     /// Description shown in help or onboarding text.
     pub fn description(self) -> &'static str {
         match self {
+            AppMode::Chat => "Chat mode - reine Konversation, kein Tool-Use",
+            AppMode::Plan => "Plan mode - Pläne erstellen, autonom recherchieren",
             AppMode::Agent => "Agent mode - autonomous task execution with tools",
-            AppMode::Yolo => "YOLO mode - full tool access without approvals",
-            AppMode::Plan => "Plan mode - design before implementing",
-            AppMode::Propeller => "Propeller mode - full auto-approve with Propeller identity",
+            AppMode::Shell => "Shell mode - Bash auto-approve, sudo fragt nach",
+            AppMode::Yolo => "YOLO mode - full tool access, sudo ohne Rückfrage",
+            AppMode::Propeller => "Auto mode - Übermoodus mit max-Reasoning",
         }
     }
 }
@@ -2768,13 +2786,15 @@ impl App {
         true
     }
 
-    /// Cycle through modes: Plan → Agent → Yolo → Propeller → Plan.
+    /// Cycle through modes: Chat → Plan → Agent → Shell → Yolo → Auto → Chat.
     pub fn cycle_mode(&mut self) {
         let next = match self.mode {
+            AppMode::Chat => AppMode::Plan,
             AppMode::Plan => AppMode::Agent,
-            AppMode::Agent => AppMode::Yolo,
+            AppMode::Agent => AppMode::Shell,
+            AppMode::Shell => AppMode::Yolo,
             AppMode::Yolo => AppMode::Propeller,
-            AppMode::Propeller => AppMode::Plan,
+            AppMode::Propeller => AppMode::Chat,
         };
         let _ = self.set_mode(next);
     }
@@ -2783,9 +2803,11 @@ impl App {
     #[allow(dead_code)]
     pub fn cycle_mode_reverse(&mut self) {
         let next = match self.mode {
-            AppMode::Plan => AppMode::Propeller,
+            AppMode::Chat => AppMode::Propeller,
+            AppMode::Plan => AppMode::Chat,
             AppMode::Agent => AppMode::Plan,
-            AppMode::Yolo => AppMode::Agent,
+            AppMode::Shell => AppMode::Agent,
+            AppMode::Yolo => AppMode::Shell,
             AppMode::Propeller => AppMode::Yolo,
         };
         let _ = self.set_mode(next);

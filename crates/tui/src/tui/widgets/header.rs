@@ -127,9 +127,11 @@ impl<'a> HeaderWidget<'a> {
 
     fn mode_color(mode: AppMode) -> Color {
         match mode {
-            AppMode::Agent => palette::MODE_AGENT,
-            AppMode::Yolo => palette::MODE_YOLO,
+            AppMode::Chat => palette::MODE_CHAT,
             AppMode::Plan => palette::MODE_PLAN,
+            AppMode::Agent => palette::MODE_AGENT,
+            AppMode::Shell => palette::MODE_SHELL,
+            AppMode::Yolo => palette::MODE_YOLO,
             AppMode::Propeller => palette::MODE_PROPELLER,
         }
     }
@@ -140,9 +142,11 @@ impl<'a> HeaderWidget<'a> {
         // Übermoodus mit auto-approve + max-reasoning) — User-facing heißt
         // er jetzt "Auto" (siehe auch footer.rs).
         match mode {
-            AppMode::Agent => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Agent"),
-            AppMode::Yolo => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Yolo"),
+            AppMode::Chat => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Chat"),
             AppMode::Plan => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Plan"),
+            AppMode::Agent => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Agent"),
+            AppMode::Shell => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Shell"),
+            AppMode::Yolo => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Yolo"),
             AppMode::Propeller => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Auto"),
         }
     }
