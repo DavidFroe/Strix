@@ -1960,6 +1960,9 @@ pub struct App {
     pub screensaver: Option<crate::tui::screensaver::Screensaver>,
     /// Timestamp of the last user key/mouse input (for idle detection).
     pub last_input_at: std::time::Instant,
+    /// SystemTime beim App-Start. Sidebar nutzt das zum (upgraded)-Marker
+    /// an Projekt-Files wenn deren mtime nach dem Start liegt.
+    pub session_started_at: std::time::SystemTime,
     /// Named model presets loaded from strix.conf. Tab cycles through them.
     pub presets: Vec<ModelPreset>,
     /// Index of the currently active preset (`usize::MAX` = no preset active yet).
@@ -2683,6 +2686,7 @@ impl App {
             strix_placeholder: pick_strix_placeholder(),
             screensaver: None,
             last_input_at: std::time::Instant::now(),
+            session_started_at: std::time::SystemTime::now(),
             presets: strix_presets,
             current_preset_idx: 0,
             strix_tooltips: load_strix_tooltips(),

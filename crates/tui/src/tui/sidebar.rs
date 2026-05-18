@@ -834,10 +834,33 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
 
     // strix.md ist die Strix-Variante; CLAUDE.md akzeptiert wir auch (Anthropic-Pattern).
     // Wir zeigen nur eine Zeile in der Info-Box — strix.md ist primär.
-    let strix_md_exists = ws.join("strix.md").exists() || ws.join("CLAUDE.md").exists();
-    let spec_exists = ws.join("spec.md").exists();
-    let tagebuch_exists = ws.join("tagebuch.md").exists();
-    let plan_exists = ws.join("plan.md").exists();
+    let strix_path = if ws.join("strix.md").exists() {
+        Some(ws.join("strix.md"))
+    } else if ws.join("CLAUDE.md").exists() {
+        Some(ws.join("CLAUDE.md"))
+    } else {
+        None
+    };
+
+    // Datei wurde seit Session-Start geändert (→ "upgraded"-Marker).
+    let upgraded_since_start = |p: &std::path::Path| -> bool {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .map(|t| t > app.session_started_at)
+            .unwrap_or(false)
+    };
+
+    let strix_md_exists = strix_path.is_some();
+    let strix_md_upgraded = strix_path.as_deref().map(upgraded_since_start).unwrap_or(false);
+    let spec_path = ws.join("spec.md");
+    let spec_exists = spec_path.exists();
+    let spec_upgraded = spec_exists && upgraded_since_start(&spec_path);
+    let plan_path = ws.join("plan.md");
+    let plan_exists = plan_path.exists();
+    let plan_upgraded = plan_exists && upgraded_since_start(&plan_path);
+    let tagebuch_path = ws.join("tagebuch.md");
+    let tagebuch_exists = tagebuch_path.exists();
+    let tagebuch_upgraded = tagebuch_exists && upgraded_since_start(&tagebuch_path);
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(7);
 
@@ -855,15 +878,14 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(palette::accent_light()),
         ),
     ]));
-    lines.push(Line::from(""));
 
-    let file_line = |name: &'static str, cmd: &'static str, exists: bool| -> Line<'static> {
+    let file_line = |name: &'static str, cmd: &'static str, exists: bool, upgraded: bool| -> Line<'static> {
         let (icon, icon_color) = if exists {
             ("\u{2713}", palette::accent())
         } else {
             ("\u{2013}", palette::TEXT_MUTED)
         };
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled(icon.to_string(), Style::default().fg(icon_color)),
             Span::raw(" "),
             Span::styled(name.to_string(), Style::default().fg(palette::TEXT_HINT)),
@@ -872,12 +894,20 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
                 cmd.to_string(),
                 Style::default().fg(palette::TEXT_MUTED),
             ),
-        ])
+        ];
+        if upgraded {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                "(upgraded)".to_string(),
+                Style::default().fg(palette::accent_light()),
+            ));
+        }
+        Line::from(spans)
     };
-    lines.push(file_line("strix.md   ", "/strix", strix_md_exists));
-    lines.push(file_line("spec.md    ", "/spec", spec_exists));
-    lines.push(file_line("plan.md    ", "/plan", plan_exists));
-    lines.push(file_line("tagebuch.md", "/tagebuch", tagebuch_exists));
+    lines.push(file_line("strix.md   ", "/strix", strix_md_exists, strix_md_upgraded));
+    lines.push(file_line("spec.md    ", "/spec", spec_exists, spec_upgraded));
+    lines.push(file_line("plan.md    ", "/plan", plan_exists, plan_upgraded));
+    lines.push(file_line("tagebuch.md", "/tagebuch", tagebuch_exists, tagebuch_upgraded));
 
     let theme = Theme::dark();
     let header = Line::from(vec![Span::styled(

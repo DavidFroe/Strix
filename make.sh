@@ -114,10 +114,10 @@ except Exception: print(False)
 EXTRA_FLAGS=""
 [ "$AUTO_APPROVE" = "True" ] && EXTRA_FLAGS="--yolo"
 
-# Maus-Capture per Default AUS — verursacht in einigen Terminal-Emulatoren
-# (vor allem SSH/gnome-terminal) heftiges Flicker beim Re-Render sobald die
-# Maus über der TUI steht. User kann mit `strix --mouse-capture` overriden.
-case "$*" in *--mouse-capture*) :;; *) EXTRA_FLAGS="$EXTRA_FLAGS --no-mouse-capture";; esac
+# Maus-Capture per Default AN (standard). Bei Flicker-Problemen mit
+# bestimmten Terminal-Emulatoren kann User mit `strix --no-mouse-capture`
+# deaktivieren. Diagnose: ist meist KEIN Maus-Problem, sondern Terminal-
+# Emulator/SSH-Layer (siehe docs/FLICKER_TROUBLESHOOTING.md).
 
 "$LIBDIR/strix-tui" $EXTRA_FLAGS "$@" &
 TUI_PID=$!
