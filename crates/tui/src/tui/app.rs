@@ -1003,10 +1003,10 @@ fn run_startup_inference_incremental(
                         slog(&format!(
                             "  quote attempt {attempt} REFUSAL ({dur}ms, {}c): {:?}",
                             q_trim.chars().count(),
-                            &q_trim[..q_trim.len().min(80)]
+                            q_trim.chars().take(80).collect::<String>()
                         ));
                     } else {
-                        slog(&format!("  quote attempt {attempt} OK  ({dur}ms)  q={:?}", &q_trim[..q_trim.len().min(60)]));
+                        slog(&format!("  quote attempt {attempt} OK  ({dur}ms)  q={:?}", q_trim.chars().take(60).collect::<String>()));
                         result = Some((q.clone(), a));
                         break;
                     }
@@ -1104,7 +1104,7 @@ Falls kein Kommentar möglich: {{\"k\":null}}\n\n\
             Ok(raw_orig) => {
                 let raw = strip_think_tags(&raw_orig);
                 if let Some(c) = extract_json_comment(&raw) {
-                    slog(&format!("  comment attempt {attempt} OK ({dur}ms)  k={:?}", &c[..c.len().min(80)]));
+                    slog(&format!("  comment attempt {attempt} OK ({dur}ms)  k={:?}", c.chars().take(80).collect::<String>()));
                     Some(c)
                 } else {
                     // Empty / unparseable content — this is the reasoning-bug. Hard-fail with
@@ -1168,7 +1168,7 @@ Falls kein Kommentar möglich: {{\"k\":null}}\n\n\
     // /no_think keeps this fast; no heavy reasoning needed for a simple proof-read.
     let (corrected_quote, corrected_attribution, final_greeting) = match comment_found {
         Some(ref greeting) => {
-            slog(&format!("PHASE 3: correction START  greeting={:?}", &greeting[..greeting.len().min(60)]));
+            slog(&format!("PHASE 3: correction START  greeting={:?}", greeting.chars().take(60).collect::<String>()));
             let t_corr = std::time::Instant::now();
             let corr_prompt = format!(
                 "/no_think\n\
@@ -1189,14 +1189,14 @@ Zitat: \"{quote}\"\nAutor: \"{attribution}\"\nKommentar: \"{greeting}\""
                     let ca = v.get("autor").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                     let cg = v.get("kommentar").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                     let final_k = cg.unwrap_or_else(|| greeting.clone());
-                    slog(&format!("PHASE 3 DONE ({dur}ms)  corrected_k={:?}", &final_k[..final_k.len().min(80)]));
+                    slog(&format!("PHASE 3 DONE ({dur}ms)  corrected_k={:?}", final_k.chars().take(80).collect::<String>()));
                     (cq, ca, final_k)
                 } else {
-                    slog(&format!("PHASE 3 parse err ({dur}ms)  cleaned={:?}", &cleaned[..cleaned.len().min(80)]));
+                    slog(&format!("PHASE 3 parse err ({dur}ms)  cleaned={:?}", cleaned.chars().take(80).collect::<String>()));
                     (None, None, greeting.clone())
                 }
             } else {
-                slog(&format!("PHASE 3 no JSON braces ({dur}ms)  raw={:?}", &raw[..raw.len().min(80)]));
+                slog(&format!("PHASE 3 no JSON braces ({dur}ms)  raw={:?}", raw.chars().take(80).collect::<String>()));
                 (None, None, greeting.clone())
             }
         }
@@ -2084,12 +2084,12 @@ impl App {
                             // nothing else to do at the App level.
                         }
                         InferenceUpdate::QuoteReady(q, a) => {
-                            tui_log(&format!("QuoteReady received  q={:?}  a={:?}", &q[..q.len().min(40)], a));
+                            tui_log(&format!("QuoteReady received  q={:?}  a={:?}", q.chars().take(40).collect::<String>(), a));
                             // Persist immediately — even if splash times out before comment arrives.
                             self.startup_quote = Some((q.clone(), a.clone(), String::new()));
                         }
                         InferenceUpdate::CommentReady { greeting: g, corrected_quote: cq, corrected_attribution: ca } => {
-                            tui_log(&format!("CommentReady received  k={:?}  cq={:?}", &g[..g.len().min(60)], cq.as_deref().map(|s| &s[..s.len().min(30)])));
+                            tui_log(&format!("CommentReady received  k={:?}  cq={:?}", g.chars().take(60).collect::<String>(), cq.as_deref().map(|s| s.chars().take(30).collect::<String>())));
                             // Attach corrected content to the already-stored quote.
                             if let Some((ref mut q, ref mut a, ref mut gr)) = self.startup_quote {
                                 *gr = g.clone();
