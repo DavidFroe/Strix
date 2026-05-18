@@ -49,7 +49,7 @@ const INSTRUCTIONS_FILE_MAX_BYTES: usize = 100 * 1024;
 /// guess from the user's first message. `locale_tag` is resolved by
 /// the caller from `Settings` so this function stays I/O-free.
 fn render_environment_block(workspace: &Path, locale_tag: &str, model: &str) -> String {
-    let propeller_version = env!("CARGO_PKG_VERSION");
+    let strix_version = env!("CARGO_PKG_VERSION");
     let platform = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
     let pwd = workspace.display();
@@ -64,7 +64,7 @@ fn render_environment_block(workspace: &Path, locale_tag: &str, model: &str) -> 
         "## Environment\n\
          \n\
          - lang: {locale_tag}{model_line}\n\
-         - propeller_version: {propeller_version}\n\
+         - strix_version: {strix_version}\n\
          - platform: {platform}\n\
          - shell: {shell}\n\
          - pwd: {pwd}"
@@ -542,7 +542,7 @@ mod tests {
         assert!(block.starts_with("## Environment"));
         assert!(block.contains("- lang: zh-Hans"));
         assert!(block.contains(&format!(
-            "- propeller_version: {}",
+            "- strix_version: {}",
             env!("CARGO_PKG_VERSION")
         )));
         assert!(block.contains(&format!("- pwd: {}", tmp.path().display())));
@@ -572,7 +572,7 @@ mod tests {
         };
         assert!(prompt.contains("## Environment"));
         assert!(prompt.contains("- lang: ja"));
-        assert!(prompt.contains("- propeller_version:"));
+        assert!(prompt.contains("- strix_version:"));
     }
 
     #[test]
@@ -679,7 +679,7 @@ mod tests {
     fn compose_prompt_includes_all_layers() {
         let prompt = compose_prompt(AppMode::Agent, Personality::Calm);
         // Base layer
-        assert!(prompt.contains("You are Propeller"));
+        assert!(prompt.contains("You are Strix"));
         // Personality layer
         assert!(prompt.contains("Personality: Calm"));
         // Mode layer
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn compose_prompt_deterministic_order() {
         let prompt = compose_prompt(AppMode::Yolo, Personality::Calm);
-        let base_pos = prompt.find("You are Propeller").unwrap();
+        let base_pos = prompt.find("You are Strix").unwrap();
         let personality_pos = prompt.find("Personality: Calm").unwrap();
         let mode_pos = prompt.find("Mode: YOLO").unwrap();
         let approval_pos = prompt.find("Approval Policy: Auto").unwrap();
