@@ -66,6 +66,19 @@ bash make.sh                          # → strix_<VERSION>_amd64.deb
 sudo apt install ./strix_*.deb        # installiert /usr/bin/strix
 ```
 
+## Dev-Toolchain (im Strix-Verzeichnis)
+
+| Script | Zweck |
+|---|---|
+| `start.sh` | Strix lokal starten (spawnt owltrail-Adapter + TUI) |
+| `make.sh` | Standard-Debian-Paket bauen (`strix_<v>_amd64.deb`) |
+| `claude.sh` | Claude-Code-Session in diesem Verzeichnis öffnen mit `CLAUDE.md`-Kontext |
+| `git_up.sh` | `git add -A && git commit && git push` mit Sicherheits-Check gegen Secret-Leaks |
+| `transfer.sh` | Beide Pakete bauen: Standard + Personal-Profil (`strix-transfer_<v>_amd64.deb`) für Transfer auf neues Debian-System |
+| `spec.md` | Vibecoding-TODO-Liste (in der TUI: `/spec`) |
+| `tagebuch.md` | Session-Log (in der TUI: `/tagebuch`) |
+| `CLAUDE.md` | Dev-Kontext für eine frische Claude-Session |
+
 ## Lizenz
 
 MIT. Forked aus [deepseek-tui](https://github.com/Hmbown/DeepSeek-TUI).
