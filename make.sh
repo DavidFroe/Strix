@@ -76,7 +76,7 @@ _port_open() {
 
 _ensure_owltrail() {
     if ! _port_open; then
-        python3 "$LIBDIR/owltrail_adapter.py" --port $PORT --conf "$CONF" >> "$LOG" 2>&1 &
+        python3 "$LIBDIR/owltrail_adapter.py" --port $PORT --conf "$CONF" --log "$LOG" >> "$LOG" 2>&1 &
         for _ in $(seq 1 20); do sleep 0.25; _port_open && return 0; done
         echo "strix: Adapter nicht startbar. Log: $LOG" >&2
         exit 1
@@ -86,7 +86,7 @@ _ensure_owltrail() {
 _watchdog() {
     while kill -0 "${TUI_PID:-0}" 2>/dev/null; do
         if ! _port_open; then
-            python3 "$LIBDIR/owltrail_adapter.py" --port $PORT --conf "$CONF" >> "$LOG" 2>&1 &
+            python3 "$LIBDIR/owltrail_adapter.py" --port $PORT --conf "$CONF" --log "$LOG" >> "$LOG" 2>&1 &
         fi
         sleep 2
     done
