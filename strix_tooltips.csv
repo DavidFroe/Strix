@@ -8,6 +8,12 @@ Tipp: '/queue' reiht Nachrichten in eine Warteschlange ein
 Tipp: '/context' öffnet den aktiven Projekt-Kontext
 Tipp: Esc zwei Mal drücken = Backtrack zur vorigen Antwort
 Tipp: Shift+Tab zeigt verfügbare Slash-Commands
+Tipp: '/set reasoning max' setzt maximale Reasoning-Tiefe
+Tipp: '/set reasoning high|max|off' regelt wie tief das Modell denkt
+Tipp: '/model <name>' oder Ctrl+Tab wechselt das aktive Modell
+Tipp: '/tagebuch' zeigt den kompletten Projektverlauf
+Tipp: '/strix' zeigt strix.md (Projekt-Kontext)
+Tipp: 'strix --mouse-capture' aktiviert Maus-Klicks (Default: aus wegen Flicker)
 Tipp: '@dateiname' fügt Dateien als Kontext hinzu
 Tipp: Modelle wechseln kostet kein Geld — probier ruhig durch
 Tipp: '/models' listet alle aktuell verfügbaren Modelle

@@ -258,7 +258,7 @@ impl SplashScreen {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // ── 1. Solid black background ─────────────────────────────────────────
         Clear.render(area, buf);
-        let black = Style::default().fg(Color::Black).bg(Color::Reset);
+        let black = Style::default().fg(Color::Black).bg(Color::Black);
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -312,7 +312,7 @@ impl SplashScreen {
             if row >= area.bottom() { break; }
             // Write glyphs first (gives correct multi-byte rendering)
             buf.set_string(ox, row, logo_line,
-                Style::default().fg(Color::White).bg(Color::Reset));
+                Style::default().fg(Color::White).bg(Color::Black));
             // Then recolour each cell with the gradient
             let lw = logo_line.width() as u16;
             let mut cx = ox;
@@ -323,7 +323,7 @@ impl SplashScreen {
                 let v = li as f64 / logo_h.max(1) as f64;
                 let t = (0.75 * h + 0.25 * (1.0 - v)).clamp(0.0, 1.0);
                 if let Some(cell) = buf.cell_mut((cx, row)) {
-                    cell.set_fg(logo_gradient(t)).set_bg(Color::Reset);
+                    cell.set_fg(logo_gradient(t)).set_bg(Color::Black);
                 }
                 cx += cw;
             }
@@ -336,7 +336,7 @@ impl SplashScreen {
         if row < area.bottom() {
             let vx = ox + content_w.saturating_sub(ver_str.len() as u16);
             buf.set_string(vx, row, &ver_str,
-                Style::default().fg(Color::Indexed(240)).bg(Color::Reset));
+                Style::default().fg(Color::Indexed(240)).bg(Color::Black));
         }
         row += 1; // blank between logo and propeller
 
@@ -350,7 +350,7 @@ impl SplashScreen {
             let lw = owl_line.width() as u16;
             let ox_owl = ox + content_w.saturating_sub(lw) / 2;
             buf.set_string(ox_owl, row, owl_line,
-                Style::default().fg(Color::White).bg(Color::Reset));
+                Style::default().fg(Color::White).bg(Color::Black));
             // Recolour pro Cell mit Theme-Gradient
             let mut cx = ox_owl;
             for ch in owl_line.chars() {
@@ -364,7 +364,7 @@ impl SplashScreen {
                     logo_gradient(0.4 + 0.4 * v)
                 };
                 if let Some(cell) = buf.cell_mut((cx, row)) {
-                    cell.set_fg(color).set_bg(Color::Reset);
+                    cell.set_fg(color).set_bg(Color::Black);
                 }
                 cx += cw;
             }
@@ -383,7 +383,7 @@ impl SplashScreen {
             if row >= area.bottom() { break; }
             let qw = qline.width() as u16;
             let qx = ox + content_w.saturating_sub(qw) / 2;
-            buf.set_string(qx, row, qline, Style::default().fg(quote_color).bg(Color::Reset));
+            buf.set_string(qx, row, qline, Style::default().fg(quote_color).bg(Color::Black));
             row += 1;
         }
         // If nothing to render (Pending with no quote yet), advance 1 row anyway.
@@ -397,7 +397,7 @@ impl SplashScreen {
                 let aw = a.width() as u16;
                 let ax = ox + content_w.saturating_sub(aw) / 2;
                 buf.set_string(ax, row, a,
-                    Style::default().fg(Color::Indexed(67)).bg(Color::Reset));
+                    Style::default().fg(Color::Indexed(67)).bg(Color::Black));
             }
         }
         row += 1;
@@ -441,7 +441,7 @@ impl SplashScreen {
                 buf.set_string(px, row, press_key,
                     Style::default()
                         .fg(Color::Rgb(brightness, brightness, brightness + 40))
-                        .bg(Color::Reset));
+                        .bg(Color::Black));
             }
         }
     }
@@ -572,7 +572,7 @@ fn render_propeller(
             let color = blade_color(t);
 
             if let Some(cell) = buf.cell_mut((ux, uy)) {
-                cell.set_char(ch).set_fg(color).set_bg(Color::Reset);
+                cell.set_char(ch).set_fg(color).set_bg(Color::Black);
             }
         }
     }
@@ -583,7 +583,7 @@ fn render_propeller(
         if let Some(cell) = buf.cell_mut((cx, cy)) {
             cell.set_char('\u{25cf}')           // ●
                 .set_fg(Color::White)
-                .set_bg(Color::Reset);
+                .set_bg(Color::Black);
         }
     }
 }
