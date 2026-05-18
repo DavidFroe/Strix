@@ -832,9 +832,12 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
 
     let project = detect_project_name(ws).unwrap_or_else(|| "unnamed".to_string());
 
-    let claude_exists = ws.join("CLAUDE.md").exists();
+    // strix.md ist die Strix-Variante; CLAUDE.md akzeptiert wir auch (Anthropic-Pattern).
+    // Wir zeigen nur eine Zeile in der Info-Box — strix.md ist primär.
+    let strix_md_exists = ws.join("strix.md").exists() || ws.join("CLAUDE.md").exists();
     let spec_exists = ws.join("spec.md").exists();
     let tagebuch_exists = ws.join("tagebuch.md").exists();
+    let plan_exists = ws.join("plan.md").exists();
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(7);
 
@@ -871,8 +874,9 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
             ),
         ])
     };
-    lines.push(file_line("CLAUDE.md  ", "/claude", claude_exists));
+    lines.push(file_line("strix.md   ", "/strix", strix_md_exists));
     lines.push(file_line("spec.md    ", "/spec", spec_exists));
+    lines.push(file_line("plan.md    ", "/plan", plan_exists));
     lines.push(file_line("tagebuch.md", "/tagebuch", tagebuch_exists));
 
     let theme = Theme::dark();
@@ -899,7 +903,7 @@ fn render_sidebar_info(f: &mut Frame, area: Rect, app: &App) {
 /// 2. Trailing folder name des Workspaces (deepseek tui → "deepseek tui")
 /// 3. None → Caller setzt "unnamed"
 fn detect_project_name(ws: &std::path::Path) -> Option<String> {
-    for candidate in &["CLAUDE.md", "spec.md", "README.propeller.md", "README.md"] {
+    for candidate in &["strix.md", "CLAUDE.md", "spec.md", "README.md"] {
         let path = ws.join(candidate);
         if let Ok(content) = std::fs::read_to_string(&path) {
             for line in content.lines().take(20) {

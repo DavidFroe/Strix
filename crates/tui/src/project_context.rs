@@ -21,6 +21,7 @@ use thiserror::Error;
 /// Names of project context files to look for, in priority order.
 const PROJECT_CONTEXT_FILES: &[&str] = &[
     "AGENTS.md",
+    "strix.md",
     ".claude/instructions.md",
     "CLAUDE.md",
     ".deepseek/instructions.md",

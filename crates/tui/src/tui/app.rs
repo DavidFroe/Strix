@@ -771,7 +771,15 @@ fn extract_quote_json(raw: &str) -> Option<(String, String)> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
     if end < start { return None; }
-    let v: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
+    // Strip doppelte umschließende Klammern: `{{...}}` → `{...}`.
+    // Manche Modelle escapen Format-String-style. JSON akzeptiert das nicht.
+    let slice = &text[start..=end];
+    let cleaned = if slice.starts_with("{{") && slice.ends_with("}}") {
+        &slice[1..slice.len() - 1]
+    } else {
+        slice
+    };
+    let v: serde_json::Value = serde_json::from_str(cleaned).ok()?;
     let zitat = v.get("zitat")?.as_str()?.trim().to_string();
     if zitat.is_empty() || is_refusal_quote(&zitat) { return None; }
     let autor = v.get("autor")
@@ -1246,6 +1254,13 @@ fn strip_think_tags(s: &str) -> String {
 fn parse_quote_attribution(raw: &str) -> (String, String) {
     let text = strip_think_tags(raw.trim());
     let text = text.as_str();
+    // Sicherheits-Filter: wenn der text wie JSON-Schmutz aussieht
+    // (`{"zitat":...}` oder `{{"zitat":...}}`), ist das Modell-Output
+    // den extract_quote_json nicht parsen konnte — KEINESFALLS raw als
+    // Zitat anzeigen. Lieber leeren String zurück → triggert Retry.
+    if text.trim_start_matches('{').starts_with('"') {
+        return (String::new(), String::new());
+    }
     for sep in [" \u{2014} ", " \u{2013} ", " - "] {
         if let Some(pos) = text.rfind(sep) {
             let quote  = text[..pos].trim().trim_matches('"').to_string();

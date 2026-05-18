@@ -251,8 +251,8 @@ pub const COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "claude",
-        aliases: &[],
-        usage: "/claude",
+        aliases: &["strix"],
+        usage: "/strix",
         description_id: MessageId::CmdContextDescription,
     },
     CommandInfo {
