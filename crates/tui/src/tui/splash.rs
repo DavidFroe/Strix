@@ -9,15 +9,16 @@ const SPLASH_DURATION: Duration = Duration::from_secs(3);
 /// Minimum time the splash is shown before a keypress can dismiss it.
 const SPLASH_MIN_MS: u128 = 600;
 
-// ASCII "STRIX" — ANSI Shadow Stil mit zwei dezenten Strichen links + rechts
-// als Auflockerungs-Akzent. Width = 44 cols (2+2 + 36 + 2+2).
+// ASCII "STRIX" — ANSI Shadow Stil mit Pyramiden-Strichen links + rechts:
+// dünn → mittel → dick (heavy) zur Mitte → mittel → dünn. Sci-fi-Auflockerung,
+// nicht plumpe Strich-Wiederholung. Width = 52 cols (4+4 + 36 + 4+4).
 const LOGO_LINES: &[&str] = &[
-    "──  ███████╗████████╗██████╗ ██╗██╗  ██╗  ──",
-    "──  ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝  ──",
-    "──  ███████╗   ██║   ██████╔╝██║ ╚███╔╝   ──",
-    "──  ╚════██║   ██║   ██╔══██╗██║ ██╔██╗   ──",
-    "──  ███████║   ██║   ██║  ██║██║██╔╝ ██╗  ──",
-    "──  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝  ──",
+    "─       ███████╗████████╗██████╗ ██╗██╗  ██╗       ─",
+    "──      ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝      ──",
+    "━━━━    ███████╗   ██║   ██████╔╝██║ ╚███╔╝    ━━━━",
+    "━━━━    ╚════██║   ██║   ██╔══██╗██║ ██╔██╗    ━━━━",
+    "──      ███████║   ██║   ██║  ██║██║██╔╝ ██╗      ──",
+    "─       ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝       ─",
 ];
 
 // Owl pixel-art (Strix-Mascot). Klare Augen (◉) + Schnabel (▼).

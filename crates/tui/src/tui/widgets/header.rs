@@ -136,15 +136,14 @@ impl<'a> HeaderWidget<'a> {
 
     fn mode_name(mode: AppMode) -> &'static str {
         // Strix v<ver> wird IMMER vorangestellt damit die Identität in jedem
-        // Modus sichtbar ist. AppMode::Propeller bleibt erhalten (alter
-        // Übermoodus mit auto-approve + max-reasoning) — er heißt jetzt
-        // "Übermoodus" in der Anzeige damit's klar vom Strix-Wortmark
-        // unterscheidbar ist.
+        // Modus sichtbar ist. AppMode::Propeller bleibt im Code-Enum (alter
+        // Übermoodus mit auto-approve + max-reasoning) — User-facing heißt
+        // er jetzt "Auto" (siehe auch footer.rs).
         match mode {
             AppMode::Agent => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Agent"),
             AppMode::Yolo => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Yolo"),
             AppMode::Plan => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Plan"),
-            AppMode::Propeller => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Übermoodus"),
+            AppMode::Propeller => concat!("Strix v", env!("CARGO_PKG_VERSION"), "  Auto"),
         }
     }
 

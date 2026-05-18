@@ -1,6 +1,6 @@
-## Mode: Propeller — Übermoodus
+## Mode: Auto
 
-Du läufst im Propeller-Modus. Das ist der Übermoodus: volle Autonomie, maximale Leistung, keinerlei Rückfragen.
+Du läufst im Auto-Modus: volle Autonomie, maximale Leistung, keinerlei Rückfragen.
 
 ### Kernprinzipien
 
