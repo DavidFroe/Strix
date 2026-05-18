@@ -1,0 +1,42 @@
+#!/bin/sh
+# propeller-start — startet den OwlTrail-Adapter falls nötig, dann propeller.
+# Gedacht für Docker-Umgebungen ohne systemd.
+# Voraussetzung: Docker mit --network=host damit 11.0.0.1 erreichbar ist.
+
+ADAPTER="/etc/propeller/owltrail_adapter.py"
+PORT="${OWLTRAIL_PORT:-8081}"
+LOG="/tmp/owltrail.log"
+TIMEOUT=10
+
+export OWLTRAIL_ADAPTER_PATH="$ADAPTER"
+export OWLTRAIL_PORT="$PORT"
+export OWLTRAIL_LOG="$LOG"
+export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-sk-owltrail}"
+export DEEPSEEK_BASE_URL="http://127.0.0.1:${PORT}/v1"
+export DEEPSEEK_PROVIDER="${DEEPSEEK_PROVIDER:-deepseek}"
+export DEEPSEEK_FORCE_HTTP1=1
+
+# Adapter starten falls Port noch nicht antwortet
+if ! nc -z 127.0.0.1 "$PORT" 2>/dev/null && ! curl -sf --connect-timeout 1 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
+    printf '[propeller-start] starte owltrail-adapter auf Port %s...\n' "$PORT"
+    python3 "$ADAPTER" --port "$PORT" >> "$LOG" 2>&1 &
+    ADAPTER_PID=$!
+
+    # Warten bis Port antwortet
+    i=0
+    while [ $i -lt $((TIMEOUT * 4)) ]; do
+        if curl -sf --connect-timeout 0.5 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.25
+        i=$((i + 1))
+    done
+
+    if ! curl -sf --connect-timeout 1 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
+        printf '[propeller] owltrail no link\n' >&2
+        exit 3
+    fi
+    printf '[propeller-start] adapter bereit.\n'
+fi
+
+propeller "$@"

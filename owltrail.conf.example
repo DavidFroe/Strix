@@ -1,0 +1,34 @@
+{
+  "_comment": "Template — kopiere zu owltrail.conf und fülle Token + IDs aus.",
+  "server_ip": "10.0.0.1",
+  "quiteque_port": 7077,
+  "listen_port": 8081,
+  "username": "<dein-username>",
+  "token": "<OWL-…-…> (NICHT committen)",
+  "model_id": "<numerische-default-id>",
+  "timeout": 1800,
+  "models": {
+    "fast":              "20",
+    "default":           "21",
+    "sonnet":            "21",
+    "haiku":             "20",
+    "opus":              "22",
+    "web":               "115",
+    "deepseek-v4-pro":        "<id>",
+    "deepseek-v4-flash":      "<id>",
+    "ollama-qwen3.6-27b":     "<id>",
+    "ollama-qwen3.6-35b":     "<id>",
+    "free":                   "free",
+    "freeplan":               "free",
+    "free-plan":              "free"
+  },
+
+  "context_overrides": {
+  },
+
+  "_strix": {
+    "auto_approve":   false,
+    "sudo_preauth":   true,
+    "sudo_password":  ""
+  }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "deepseek-app-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Codex-style app-server transport for DeepSeek workspace architecture"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+deepseek-agent = { path = "../agent", version = "1.0.0" }
+deepseek-config = { path = "../config", version = "1.0.0" }
+deepseek-core = { path = "../core", version = "1.0.0" }
+deepseek-execpolicy = { path = "../execpolicy", version = "1.0.0" }
+deepseek-hooks = { path = "../hooks", version = "1.0.0" }
+deepseek-mcp = { path = "../mcp", version = "1.0.0" }
+deepseek-protocol = { path = "../protocol", version = "1.0.0" }
+deepseek-state = { path = "../state", version = "1.0.0" }
+deepseek-tools = { path = "../tools", version = "1.0.0" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower-http.workspace = true

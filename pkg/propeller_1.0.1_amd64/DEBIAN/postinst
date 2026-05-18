@@ -1,0 +1,67 @@
+#!/bin/sh
+set -e
+. /usr/share/debconf/confmodule
+
+install_for_user() {
+    local home="$1"
+    local deepseek_dir="$home/.deepseek"
+    local settings_dir="$home/.config/deepseek"
+    local owner
+    owner=$(stat -c '%U' "$home" 2>/dev/null || echo "")
+
+    mkdir -p "$deepseek_dir" "$settings_dir"
+    [ -f "$deepseek_dir/config.toml" ]   || cp /etc/propeller/config.toml   "$deepseek_dir/config.toml"
+    [ -f "$settings_dir/settings.toml" ] || cp /etc/propeller/settings.toml "$settings_dir/settings.toml"
+
+    # Eigentümer korrigieren (postinst läuft als root)
+    if [ -n "$owner" ] && [ "$owner" != "root" ]; then
+        chown -R "$owner:$owner" "$deepseek_dir" "$settings_dir"
+    fi
+}
+
+# Berechtigungen der System-Configs setzen
+chmod 755 /etc/propeller
+chmod 644 /etc/propeller/propeller.conf \
+          /etc/propeller/owltrail.conf \
+          /etc/propeller/config.toml \
+          /etc/propeller/settings.toml
+chmod 755 /etc/propeller/owltrail_adapter.py \
+          /etc/propeller/owltrail.py
+
+# Immer fuer root / aktuellen Nutzer einrichten
+install_for_user "${HOME:-/root}"
+
+# debconf-Antwort auswerten
+db_get propeller/all_users
+if [ "$RET" = "true" ]; then
+    for home_dir in /home/*/; do
+        [ -d "$home_dir" ] || continue
+        install_for_user "$home_dir"
+    done
+fi
+
+# systemd User-Service (nur auf echten Systemen mit systemd, nicht in Docker)
+if command -v systemctl >/dev/null 2>&1 && systemctl --system is-system-running 2>/dev/null | grep -qE '^(running|degraded)'; then
+    cat > /etc/systemd/system/owltrail-adapter.service << 'SVCEOF'
+[Unit]
+Description=OwlTrail Adapter (Propeller)
+After=network.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/etc/propeller
+ExecStart=/usr/bin/python3 /etc/propeller/owltrail_adapter.py --port 8081
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/owltrail.log
+StandardError=append:/var/log/owltrail.log
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable owltrail-adapter.service 2>/dev/null || true
+    systemctl restart owltrail-adapter.service 2>/dev/null || true
+fi
+
+exit 0

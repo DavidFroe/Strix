@@ -1,0 +1,130 @@
+{
+  "total": 7,
+  "passed": 7,
+  "failed": 0,
+  "config": {
+    "server": "11.0.0.1:7077",
+    "user": "bewerbung",
+    "models": {
+      "fast": "230",
+      "default": "231",
+      "web": "115"
+    }
+  },
+  "adapter_smoke": {
+    "get_owltrail_url(8181)": "http://127.0.0.1:8181/v1",
+    "get_model_id(None)": "231",
+    "get_model_id('deepseek-chat')": "231",
+    "get_model_id('deepseek-v4-pro')": "231",
+    "get_model_id('fast')": "230",
+    "get_model_id('deepseek-flash')": "230",
+    "get_model_id('web')": "115",
+    "get_model_id('215')": "215"
+  },
+  "results": [
+    {
+      "name": "0_models_endpoint",
+      "passed": true,
+      "elapsed_s": 0.2,
+      "model_count": 71,
+      "found_deepseek": true,
+      "error": null
+    },
+    {
+      "name": "A_default_model",
+      "model_requested": "deepseek-v4-pro",
+      "passed": true,
+      "latency_first_response_s": 1.415,
+      "elapsed_s": 3.213,
+      "prompt_tokens": 21,
+      "completion_tokens": 65,
+      "total_tokens": 86,
+      "cached_tokens": 0,
+      "model_returned": "deepseek-v4-pro",
+      "content": "OWLTRAIL_OK",
+      "finish_reason": "stop",
+      "chunks": 67,
+      "deltas": 5,
+      "error": null
+    },
+    {
+      "name": "B_fast_model",
+      "model_requested": "deepseek-v4-flash",
+      "passed": true,
+      "latency_first_response_s": 0.897,
+      "elapsed_s": 0.899,
+      "prompt_tokens": 17,
+      "completion_tokens": 3,
+      "total_tokens": 20,
+      "cached_tokens": 0,
+      "model_returned": "deepseek-v4-flash",
+      "content": "FAST_OK",
+      "finish_reason": "stop",
+      "chunks": 6,
+      "deltas": 3,
+      "error": null
+    },
+    {
+      "name": "C1_streaming_pro",
+      "model_requested": "deepseek-v4-pro",
+      "passed": true,
+      "latency_first_response_s": 1.578,
+      "elapsed_s": 4.636,
+      "chunks": 110,
+      "deltas": 13,
+      "reasoning_deltas": 94,
+      "content": "1, 2, 3, 4, 5",
+      "reasoning_content_len": 309,
+      "finish_reason": "stop",
+      "prompt_tokens": 26,
+      "completion_tokens": 108,
+      "reasoning_tokens": 94,
+      "total_tokens": 134,
+      "cached_tokens": 0,
+      "model_returned": "deepseek-v4-pro",
+      "error": null
+    },
+    {
+      "name": "C2_streaming_fast",
+      "model_requested": "deepseek-v4-flash",
+      "passed": true,
+      "latency_first_response_s": 0.947,
+      "elapsed_s": 0.992,
+      "chunks": 16,
+      "deltas": 13,
+      "reasoning_deltas": 0,
+      "content": "1, 2, 3, 4, 5",
+      "reasoning_content_len": 0,
+      "finish_reason": "stop",
+      "prompt_tokens": 26,
+      "completion_tokens": 13,
+      "reasoning_tokens": null,
+      "total_tokens": 39,
+      "cached_tokens": 0,
+      "model_returned": "deepseek-v4-flash",
+      "error": null
+    },
+    {
+      "name": "D1_exec_flash",
+      "model_requested": "deepseek-v4-flash",
+      "passed": true,
+      "elapsed_s": 0.867,
+      "exit_code": 0,
+      "stdout_len": 94,
+      "stderr_tail": "",
+      "output": "OK",
+      "error": null
+    },
+    {
+      "name": "D2_exec_pro",
+      "model_requested": "deepseek-v4-pro",
+      "passed": true,
+      "elapsed_s": 2.488,
+      "exit_code": 0,
+      "stdout_len": 96,
+      "stderr_tail": "",
+      "output": "PRO_OK",
+      "error": null
+    }
+  ]
+}

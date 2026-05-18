@@ -1,0 +1,15 @@
+Package: propeller
+Version: 1.0.1
+Section: utils
+Priority: optional
+Architecture: amd64
+Installed-Size: 45772
+Maintainer: David <davidmg0815@googlemail.com>
+Pre-Depends: debconf
+Depends: libc6 (>= 2.39), python3
+Description: Propeller TUI — OwlTrail-powered terminal AI assistant
+ Propeller is a terminal UI for AI-assisted development. It connects
+ to the OwlTrail proxy (port 8081) and provides a full-featured chat
+ interface with Propeller mode (auto-approve, max effort).
+ .
+ Includes owltrail_adapter.py for model name-to-ID translation.

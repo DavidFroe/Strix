@@ -1,0 +1,62 @@
+#!/bin/sh
+# Propeller-Wrapper: prüft/startet owltrail-Adapter, stellt Terminal nach Exit/Crash wieder her.
+
+ADAPTER="/etc/propeller/owltrail_adapter.py"
+CONF="/etc/propeller/owltrail.conf"
+LOG="/tmp/owltrail-adapter.log"
+TIMEOUT=12
+export PYTHONPATH="/etc/propeller:${PYTHONPATH}"
+
+# Port aus owltrail.conf lesen (Fallback: 8081)
+if command -v python3 >/dev/null 2>&1 && [ -f "$CONF" ]; then
+    PORT=$(python3 -c "import json; d=json.load(open('$CONF')); print(d.get('listen_port',8081))" 2>/dev/null)
+fi
+PORT="${PORT:-8081}"
+
+# Terminal-Cleanup bei Exit/Crash
+_cleanup() {
+    tput cnorm 2>/dev/null
+    tput rmcup 2>/dev/null
+    stty sane 2>/dev/null
+}
+trap _cleanup EXIT INT TERM
+
+_adapter_ok() {
+    curl -sf --connect-timeout 1 "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1
+}
+
+# Adapter prüfen — direkt starten falls nicht erreichbar
+if ! _adapter_ok; then
+    printf '[propeller] starte owltrail-adapter auf Port %s...\n' "$PORT" >&2
+    python3 "$ADAPTER" --port "$PORT" >> "$LOG" 2>&1 &
+
+    i=0
+    while [ $i -lt $((TIMEOUT * 4)) ]; do
+        if _adapter_ok; then break; fi
+        sleep 0.25
+        i=$((i + 1))
+    done
+
+    if ! _adapter_ok; then
+        printf '\n[propeller] FEHLER: owltrail-Adapter nicht erreichbar.\n' >&2
+        printf '  Log: tail -20 %s\n' "$LOG" >&2
+        printf '  11.0.0.1 erreichbar? ping -c1 11.0.0.1\n\n' >&2
+        exit 3
+    fi
+    printf '[propeller] owltrail-Adapter bereit (Port %s).\n' "$PORT" >&2
+fi
+
+export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-sk-owltrail}"
+export DEEPSEEK_BASE_URL="http://127.0.0.1:${PORT}/v1"
+export DEEPSEEK_PROVIDER="${DEEPSEEK_PROVIDER:-deepseek}"
+export DEEPSEEK_FORCE_HTTP1=1
+# Alle Provider-Base-URLs auf den Adapter — owltrail routet alles
+export OLLAMA_BASE_URL="http://127.0.0.1:${PORT}/v1"
+export OPENAI_BASE_URL="http://127.0.0.1:${PORT}/v1"
+
+/usr/lib/propeller/propeller-bin "$@"
+EXIT_CODE=$?
+
+_cleanup
+trap - EXIT
+exit $EXIT_CODE

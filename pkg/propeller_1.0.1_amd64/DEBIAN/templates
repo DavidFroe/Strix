@@ -1,0 +1,8 @@
+Template: propeller/all_users
+Type: boolean
+Default: true
+Description: Propeller fuer alle Nutzer einrichten?
+ Soll die Konfiguration (config.toml, settings.toml) fuer alle
+ vorhandenen Nutzer in /home/* kopiert werden?
+ .
+ Bei "Nein" wird nur der aktuelle Nutzer eingerichtet.

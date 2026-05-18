@@ -1,0 +1,8 @@
+locale = "de"
+default_mode = "propeller"
+auto_compact = false
+fancy_animations = false
+subagent_model = "deepseek-v4-flash"
+
+[provider_models]
+deepseek = "deepseek-v4-pro"
