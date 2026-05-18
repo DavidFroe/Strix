@@ -9,14 +9,15 @@ const SPLASH_DURATION: Duration = Duration::from_secs(3);
 /// Minimum time the splash is shown before a keypress can dismiss it.
 const SPLASH_MIN_MS: u128 = 600;
 
-// ASCII "STRIX" — ANSI Shadow Stil (Standard Figlet). Width = 36 cols.
+// ASCII "STRIX" — ANSI Shadow Stil mit zwei dezenten Strichen links + rechts
+// als Auflockerungs-Akzent. Width = 44 cols (2+2 + 36 + 2+2).
 const LOGO_LINES: &[&str] = &[
-    "███████╗████████╗██████╗ ██╗██╗  ██╗",
-    "██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝",
-    "███████╗   ██║   ██████╔╝██║ ╚███╔╝ ",
-    "╚════██║   ██║   ██╔══██╗██║ ██╔██╗ ",
-    "███████║   ██║   ██║  ██║██║██╔╝ ██╗",
-    "╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝",
+    "──  ███████╗████████╗██████╗ ██╗██╗  ██╗  ──",
+    "──  ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝  ──",
+    "──  ███████╗   ██║   ██████╔╝██║ ╚███╔╝   ──",
+    "──  ╚════██║   ██║   ██╔══██╗██║ ██╔██╗   ──",
+    "──  ███████║   ██║   ██║  ██║██║██╔╝ ██╗  ──",
+    "──  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝  ──",
 ];
 
 // Owl pixel-art (Strix-Mascot). Klare Augen (◉) + Schnabel (▼).
@@ -182,13 +183,20 @@ impl SplashScreen {
         matches!(&self.inference, InferenceState::Failed(_))
     }
 
-    /// Live status line under the propeller: "<label> · #N · Xs". Returns
-    /// `None` when no attempt is currently running (between phases / done).
+    /// Live status line under the propeller: "<label>... · #N · Xs" mit
+    /// 3-Punkt-Animation am Label-Ende (war zwischendurch verloren gegangen).
+    /// `None` wenn kein Attempt läuft (zwischen Phasen / fertig).
     fn attempt_status_line(&self) -> Option<String> {
         let label = self.attempt_label.as_ref()?;
         let started = self.attempt_started_at?;
-        let secs = started.elapsed().as_secs();
-        Some(format!("{label} · #{n} · {secs}s", n = self.attempt_n))
+        let elapsed = started.elapsed();
+        let secs = elapsed.as_secs();
+        let dots = match (elapsed.as_millis() / 500) % 3 {
+            0 => ".  ",
+            1 => ".. ",
+            _ => "...",
+        };
+        Some(format!("{label}{dots} · #{n} · {secs}s", n = self.attempt_n))
     }
 
     /// Apply an incremental update from the inference thread.

@@ -1091,7 +1091,7 @@ Falls kein Kommentar möglich: {{\"k\":null}}\n\n\
     // loud and clear, not retry around silently.
     let comment_found = {
         let attempt: u32 = 1;
-        let phase_label = format!("{main_model} denkt dar\u{fc}ber");
+        let phase_label = format!("{main_model} denkt dar\u{fc}ber nach");
         let _ = tx.send(InferenceUpdate::AttemptStarted {
             phase_label: phase_label.clone(),
             attempt,

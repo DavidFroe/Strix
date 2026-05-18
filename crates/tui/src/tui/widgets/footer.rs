@@ -284,10 +284,10 @@ fn mode_style(app: &App) -> (&'static str, Color) {
         AppMode::Agent => "agent",
         AppMode::Yolo => "yolo",
         AppMode::Plan => "plan",
-        // Strix: "Propeller" als Mode-Name gehört zu propeller_dev — im
-        // Strix-Footer fliegt das Label ersatzlos raus (leere Strings werden
-        // vom Render-Loop übersprungen, siehe build_status_line_spans).
-        AppMode::Propeller => "",
+        // Strix: der "Übermoodus" heißt jetzt "auto" — der Code-Enum-Name
+        // AppMode::Propeller bleibt (Refactor wäre 30+ Stellen), aber das
+        // User-facing Label im Footer ist "auto".
+        AppMode::Propeller => "auto",
     };
     let color = match app.mode {
         AppMode::Agent => app.ui_theme.mode_agent,
