@@ -316,11 +316,14 @@ pub const COMMANDS: &[CommandInfo] = &[
         usage: "/load [path]",
         description_id: MessageId::CmdLoadDescription,
     },
+    // /compact ist (für jetzt) hinter /compress versteckt — Code-Pfad
+    // existiert weiter (Auto-Compaction, settings.toml), aber im
+    // Slash-Menü taucht er nicht mehr auf.
     CommandInfo {
-        name: "compact",
-        aliases: &[],
-        usage: "/compact",
-        description_id: MessageId::CmdCompactDescription,
+        name: "compress",
+        aliases: &["compact"],
+        usage: "/compress [--model NAME] [--before 2h|--keep-last 10]",
+        description_id: MessageId::CmdCompressDescription,
     },
     CommandInfo {
         name: "context",
@@ -568,7 +571,7 @@ pub fn execute(cmd: &str, app: &mut App) -> CommandResult {
         "save" => session::save(app, arg),
         "sessions" | "resume" => session::sessions(app, arg),
         "load" => session::load(app, arg),
-        "compact" => session::compact(app),
+        "compact" | "compress" => session::compact(app),
         "cycles" => cycle::list_cycles(app),
         "cycle" => cycle::show_cycle(app, arg),
         "recall" => cycle::recall_archive(app, arg),

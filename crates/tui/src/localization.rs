@@ -229,6 +229,7 @@ pub enum MessageId {
     CmdCacheDescription,
     CmdClearDescription,
     CmdCompactDescription,
+    CmdCompressDescription,
     CmdConfigDescription,
     CmdContextDescription,
     CmdCostDescription,
@@ -454,6 +455,7 @@ pub const ALL_MESSAGE_IDS: &[MessageId] = &[
     MessageId::CmdCacheDescription,
     MessageId::CmdClearDescription,
     MessageId::CmdCompactDescription,
+    MessageId::CmdCompressDescription,
     MessageId::CmdConfigDescription,
     MessageId::CmdContextDescription,
     MessageId::CmdCostDescription,
@@ -804,6 +806,9 @@ fn english(id: MessageId) -> &'static str {
         MessageId::CmdCompactDescription => {
             "Trigger context compaction to free up space (legacy; v0.6.6 prefers cycle restart)"
         }
+        MessageId::CmdCompressDescription => {
+            "Compress the conversation with a chosen model and save as a new session file"
+        }
         MessageId::CmdConfigDescription => "Open interactive configuration editor",
         MessageId::CmdContextDescription => "Open compact session context inspector",
         MessageId::CmdCostDescription => "Show session cost breakdown",
@@ -1143,6 +1148,9 @@ fn german(id: MessageId) -> Option<&'static str> {
         MessageId::CmdClearDescription => "Gesprächsverlauf löschen",
         MessageId::CmdCompactDescription => {
             "Kontext komprimieren, um Speicherplatz freizugeben (veraltet; v0.6.6 bevorzugt Zyklus-Neustart)"
+        }
+        MessageId::CmdCompressDescription => {
+            "Konversation mit Wunsch-Modell zusammenfassen und als neue Session-Datei speichern"
         }
         MessageId::CmdConfigDescription => "Interaktiven Konfigurations-Editor öffnen",
         MessageId::CmdContextDescription => "Kompakten Sitzungskontext-Inspektor öffnen",
@@ -1488,6 +1496,9 @@ fn japanese(id: MessageId) -> Option<&'static str> {
         MessageId::CmdCompactDescription => {
             "コンテキスト圧縮で容量を確保（旧式：v0.6.6 以降はサイクル再起動を推奨）"
         }
+        MessageId::CmdCompressDescription => {
+            "選択したモデルで会話を要約し、新しいセッションファイルとして保存"
+        }
         MessageId::CmdConfigDescription => "インタラクティブな設定エディタを開く",
         MessageId::CmdContextDescription => "コンパクトなセッションコンテキスト検査ツールを開く",
         MessageId::CmdCostDescription => "セッションのコスト内訳を表示",
@@ -1815,6 +1826,9 @@ fn chinese_simplified(id: MessageId) -> Option<&'static str> {
         MessageId::CmdCompactDescription => {
             "触发上下文压缩以释放空间（旧版命令；v0.6.6 起建议改用循环重启）"
         }
+        MessageId::CmdCompressDescription => {
+            "使用所选模型压缩对话，并另存为新的会话文件"
+        }
         MessageId::CmdConfigDescription => "打开交互式配置编辑器",
         MessageId::CmdContextDescription => "打开紧凑会话上下文检查器",
         MessageId::CmdCostDescription => "显示本次会话的费用明细",
@@ -2109,6 +2123,9 @@ fn portuguese_brazil(id: MessageId) -> Option<&'static str> {
         MessageId::CmdClearDescription => "Limpar o histórico da conversa",
         MessageId::CmdCompactDescription => {
             "Compactar o contexto para liberar espaço (legado; a v0.6.6 prefere o reinício de ciclo)"
+        }
+        MessageId::CmdCompressDescription => {
+            "Resumir a conversa com o modelo escolhido e salvar como novo arquivo de sessão"
         }
         MessageId::CmdConfigDescription => "Abrir o editor interativo de configuração",
         MessageId::CmdContextDescription => "Abrir o inspetor compacto de contexto da sessão",

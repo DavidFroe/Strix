@@ -2480,6 +2480,13 @@ fn apply_profile(config: ConfigFile, profile: Option<&str>) -> Result<Config> {
         match profiles.and_then(|profiles| profiles.get(profile_name)) {
             Some(override_cfg) => Ok(merge_config(config.base, override_cfg.clone())),
             None => {
+                // Built-in fallback profiles: applied when not overridden by
+                // a `[profiles.<name>]` section in config.toml. Lets us ship
+                // ready-to-use defaults that users can override but don't have
+                // to define.
+                if let Some(builtin) = builtin_profile(profile_name) {
+                    return Ok(merge_config(config.base, builtin));
+                }
                 let available = profiles
                     .map(|profiles| {
                         let mut keys = profiles.keys().cloned().collect::<Vec<_>>();
@@ -2500,6 +2507,52 @@ fn apply_profile(config: ConfigFile, profile: Option<&str>) -> Result<Config> {
         }
     } else {
         Ok(config.base)
+    }
+}
+
+/// Built-in profile presets shipped with the binary. Users can shadow these
+/// by defining a `[profiles.<name>]` section in their config.toml.
+fn builtin_profile(name: &str) -> Option<Config> {
+    match name {
+        // Optimised for browser-controlled sessions: full agent mode,
+        // auto-approve and shell on, default to deepseek-v4-pro. No human
+        // sits at the terminal to confirm prompts, so we run permissive.
+        "web" => {
+            let mut cfg = Config::default();
+            cfg.default_text_model = Some("deepseek-v4-pro".to_string());
+            cfg.allow_shell = Some(true);
+            cfg.yolo = Some(true);
+            Some(cfg)
+        }
+        // Profile für die Entwicklung von Worker-Agenten (à la Lumpensammler).
+        // Strix kennt die owAPI- und owltrail-Architektur, das Datei-Skelett
+        // (Agent.md/Behavior.md/Sole.md/tools/), die Modell-IDs.
+        // Die Rollen-Doku liegt unter /etc/strix/profiles/webUIAgent.md
+        // (vom .deb mitgeliefert) und wird als instructions geladen.
+        "webUIAgent" => {
+            let mut cfg = Config::default();
+            cfg.default_text_model = Some("deepseek-v4-pro".to_string());
+            cfg.allow_shell = Some(true);
+            cfg.yolo = Some(true);
+            cfg.instructions = Some(vec![
+                "/etc/strix/profiles/webUIAgent.md".to_string(),
+            ]);
+            Some(cfg)
+        }
+        // Profile für die Entwicklung des Master/Orchestrator. Selbe Defaults
+        // wie webUIAgent, aber andere Rollen-Doku (Master = Dispatcher der
+        // sequenziell eine Google-Sheets-Tabelle abarbeitet).
+        "webUIMaster" => {
+            let mut cfg = Config::default();
+            cfg.default_text_model = Some("deepseek-v4-pro".to_string());
+            cfg.allow_shell = Some(true);
+            cfg.yolo = Some(true);
+            cfg.instructions = Some(vec![
+                "/etc/strix/profiles/webUIMaster.md".to_string(),
+            ]);
+            Some(cfg)
+        }
+        _ => None,
     }
 }
 

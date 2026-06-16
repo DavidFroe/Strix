@@ -830,8 +830,10 @@ fn chat_completion_full(client: &reqwest::blocking::Client, model: &str, prompt:
         "stream": false,
         "reasoning_effort": if max_reasoning { "max" } else { "none" },
     });
+    let port = std::env::var("OWLTRAIL_PORT").unwrap_or_else(|_| "8081".to_string());
+    let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
     let resp = client
-        .post("http://127.0.0.1:8081/v1/chat/completions")
+        .post(&url)
         .json(&body)
         .send()
         .map_err(|e| format!("Verbindungsfehler: {e}"))?;
@@ -1125,112 +1127,38 @@ Falls kein Kommentar möglich: {{\"k\":null}}\n\n\
                     slog(&format!("  comment attempt {attempt} OK ({dur}ms)  k={:?}", c.chars().take(80).collect::<String>()));
                     Some(c)
                 } else {
-                    // Empty / unparseable content — this is the reasoning-bug. Hard-fail with
-                    // a detailed message suitable for forwarding to the backend developer.
-                    let raw_excerpt: String = raw_orig.chars().take(200).collect();
-                    let detail = format!(
-                        "PROPELLER STARTUP FAILED — Reasoning-Diagnose\n\
-                         ============================================\n\
-                         Model:        {main_model}\n\
-                         Phase:        Comment generation (Phase 2)\n\
-                         Reasoning:    reasoning_effort=max\n\
-                         max_tokens:   2500\n\
-                         Attempt:      {attempt}/1 (fail-fast on empty content)\n\
-                         Duration:     {:.1}s\n\
-                         Raw response: {} bytes total, content-Feld leer/unparsbar\n\
-                         Excerpt (200 chars): {raw_excerpt:?}\n\n\
-                         Diagnose:\n\
-                           Das 27B-Dense-Modell hat ~{:.0}s gerechnet, liefert aber keinen\n\
-                           parsbaren JSON-Output. Wahrscheinlichste Ursache: /think-Prefix\n\
-                           wickelt die gesamte Modell-Ausgabe in <think>...</think> Tags;\n\
-                           reasoning_content kommt zurück, content-Feld bleibt leer.\n\n\
-                         Für den Backend-Dev (owl_daemon.py):\n\
-                           1. Wird /think tatsächlich vor das User-Message geschrieben?\n\
-                           2. Erkennt qwen3.6-27b-tools-97k diesen Prefix oder erwartet\n\
-                              es ein anderes Steuerwort (z.B. enable_thinking=true\n\
-                              Parameter, <think>-Tag im System-Prompt)?\n\
-                           3. Werden reasoning_content und content im SSE-Delta sauber\n\
-                              getrennt? Wenn der Daemon alles in reasoning_content packt\n\
-                              und content immer leer lässt, sieht der Client nichts.\n\
-                         ============================================",
-                        dur as f64 / 1000.0,
+                    // Empty / unparseable content. Kurzer Reject-Hinweis im Splash;
+                    // Volldetail für den Backend-Dev in /tmp/propeller-start.log.
+                    slog(&format!(
+                        "  comment attempt {attempt} EMPTY-CONTENT ({dur}ms)  raw_len={} excerpt={:?}",
                         raw_orig.len(),
-                        dur as f64 / 1000.0,
-                    );
-                    slog(&format!("  comment attempt {attempt} EMPTY-CONTENT-BUG ({dur}ms)  raw_len={}", raw_orig.len()));
-                    eprintln!("\n{detail}\n");
-                    let _ = tx.send(InferenceUpdate::Failed(detail));
+                        raw_orig.chars().take(200).collect::<String>()
+                    ));
+                    let short = format!("— Kommentaranfrage von {main_model} abgelehnt —");
+                    let _ = tx.send(InferenceUpdate::Failed(short));
                     return;
                 }
             }
             Err(e) => {
-                let detail = format!(
-                    "PROPELLER STARTUP FAILED — Verbindungsfehler\n\
-                     ============================================\n\
-                     Model:    {main_model}\n\
-                     Phase:    Comment generation (Phase 2)\n\
-                     Duration: {:.1}s\n\
-                     Fehler:   {e}\n\
-                     ============================================",
-                    dur as f64 / 1000.0,
-                );
                 slog(&format!("  comment attempt {attempt} ERR ({dur}ms): {e}"));
-                eprintln!("\n{detail}\n");
-                let _ = tx.send(InferenceUpdate::Failed(detail));
+                let short = format!("— Kommentaranfrage von {main_model} abgelehnt —");
+                let _ = tx.send(InferenceUpdate::Failed(short));
                 return;
             }
         }
     };
 
-    // Step 3 — Grammar/spelling correction, but only when we actually have a comment.
-    // /no_think keeps this fast; no heavy reasoning needed for a simple proof-read.
-    let (corrected_quote, corrected_attribution, final_greeting) = match comment_found {
-        Some(ref greeting) => {
-            slog(&format!("PHASE 3: correction START  greeting={:?}", greeting.chars().take(60).collect::<String>()));
-            let t_corr = std::time::Instant::now();
-            let corr_prompt = format!(
-                "/no_think\n\
-Prüfe Zitat, Autorenname und Kommentar auf Rechtschreibung, Grammatik \
-und korrekte Schreibweise von Eigennamen. Gib alles unverändert zurück wenn \
-es korrekt ist, sonst korrigiert.\n\
-Antworte NUR mit diesem JSON-Objekt, kein Markdown:\n\
-{{\"zitat\":\"ZITAT\",\"autor\":\"AUTOR\",\"kommentar\":\"KOMMENTAR\"}}\n\n\
-Zitat: \"{quote}\"\nAutor: \"{attribution}\"\nKommentar: \"{greeting}\""
-            );
-            let raw = chat_completion_with_tokens(&greet_client, &main_model, &corr_prompt, 800)
-                .unwrap_or_default();
-            let dur = t_corr.elapsed().as_millis();
-            let cleaned = strip_think_tags(&raw);
-            if let (Some(start), Some(end)) = (cleaned.find('{'), cleaned.rfind('}')) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cleaned[start..=end]) {
-                    let cq = v.get("zitat").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                    let ca = v.get("autor").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                    let cg = v.get("kommentar").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                    let final_k = cg.unwrap_or_else(|| greeting.clone());
-                    slog(&format!("PHASE 3 DONE ({dur}ms)  corrected_k={:?}", final_k.chars().take(80).collect::<String>()));
-                    (cq, ca, final_k)
-                } else {
-                    slog(&format!("PHASE 3 parse err ({dur}ms)  cleaned={:?}", cleaned.chars().take(80).collect::<String>()));
-                    (None, None, greeting.clone())
-                }
-            } else {
-                slog(&format!("PHASE 3 no JSON braces ({dur}ms)  raw={:?}", raw.chars().take(80).collect::<String>()));
-                (None, None, greeting.clone())
-            }
-        }
-        // All 3 attempts failed — skip correction, send placeholder.
-        None => {
-            slog("PHASE 2 all attempts failed — sending placeholder, skipping correction");
-            (None, None, "-Kein Kommentar-".to_string())
-        }
-    };
+    // Step 3 entfällt — Rechtschreib-Korrektur war ein extra Round-Trip
+    // ans Modell und brachte praktisch nichts außer Zeit. Wir nehmen den
+    // ungekürzten Kommentar direkt.
+    let final_greeting = comment_found.unwrap_or_else(|| "— Kein Kommentar —".to_string());
 
-    slog("sending CommentReady → splash auto-dismiss");
+    slog("sending CommentReady → splash bleibt offen bis Keypress");
     slog(&format!("=== strix startup inference END  total={}ms ===", t0.elapsed().as_millis()));
     let _ = tx.send(InferenceUpdate::CommentReady {
         greeting: final_greeting,
-        corrected_quote,
-        corrected_attribution,
+        corrected_quote: None,
+        corrected_attribution: None,
     });
 }
 
@@ -1967,6 +1895,9 @@ pub struct App {
     pub presets: Vec<ModelPreset>,
     /// Index of the currently active preset (`usize::MAX` = no preset active yet).
     pub current_preset_idx: usize,
+    /// Display name of the active preset (shown in header instead of raw model ID).
+    /// Cleared when the user manually switches model via /model.
+    pub active_preset_name: Option<String>,
 
     /// Tooltip-Pool aus `strix_tooltips.csv`. Composer-Hint-Zeile rotiert
     /// nach jedem Submit durch diesen Pool.
@@ -2687,6 +2618,7 @@ impl App {
             screensaver: None,
             last_input_at: std::time::Instant::now(),
             session_started_at: std::time::SystemTime::now(),
+            active_preset_name: strix_presets.first().map(|p| p.name.clone()),
             presets: strix_presets,
             current_preset_idx: 0,
             strix_tooltips: load_strix_tooltips(),
@@ -2840,6 +2772,7 @@ impl App {
         }
         self.current_preset_idx = (self.current_preset_idx + 1) % self.presets.len();
         let p = &self.presets[self.current_preset_idx];
+        self.active_preset_name = Some(p.name.clone());
         Some((p.name.clone(), p.model.clone(), p.subagent.clone()))
     }
 
@@ -5090,6 +5023,10 @@ impl App {
                 return format!("auto: {}", crate::models::display_model_name(effective));
             }
             return "auto".to_string();
+        }
+        // When a named preset is active, show its name instead of the raw model ID.
+        if let Some(name) = &self.active_preset_name {
+            return name.clone();
         }
         crate::models::display_model_name(&self.model)
     }

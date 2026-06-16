@@ -1,0 +1,123 @@
+{
+  "project": "Bewerbungsteam",
+  "update_id": null,
+  "sheet_url": "https://docs.google.com/spreadsheets/d/1QadB5NRUKNhK2XpQkHvqs0Uh8H7Jk1KYaa6n2oUe2Y0/edit?usp=sharing",
+  "spreadsheet": {
+    "id": "1QadB5NRUKNhK2XpQkHvqs0Uh8H7Jk1KYaa6n2oUe2Y0",
+    "title": "Bewerbungsteam-Datenbank"
+  },
+  "results": [
+    {
+      "action": "get_tab",
+      "status": "success",
+      "meta": {
+        "headers": [
+          "Referenz",
+          "Stelle",
+          "Unternehmen",
+          "Datum",
+          "Kompetenzen_OK",
+          "Anschreiben_OK",
+          "Status",
+          "Standort",
+          "Kontakt",
+          "URL",
+          "Lumpensammler_OK",
+          "Naechster_Termin",
+          "Dringlichkeit",
+          "Zustaendigkeit",
+          "Kalender_ID",
+          "Design_Vorlage",
+          "Design_OK"
+        ],
+        "rows": [
+          {
+            "Referenz": "0001",
+            "Stelle": "Systemingenieur Embedded Systems",
+            "Unternehmen": "Diehl Defence GmbH",
+            "Datum": "2026-04-26",
+            "Kompetenzen_OK": "FALSE",
+            "Anschreiben_OK": "FALSE",
+            "Status": "neu",
+            "Standort": "",
+            "Kontakt": "",
+            "URL": "",
+            "Lumpensammler_OK": "TRUE",
+            "Naechster_Termin": "",
+            "Dringlichkeit": "",
+            "Zustaendigkeit": "",
+            "Kalender_ID": "",
+            "Design_Vorlage": "",
+            "Design_OK": "FALSE"
+          }
+        ],
+        "row_count": 1,
+        "offset": 0,
+        "limit": null,
+        "as_objects": true
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "level": "info",
+      "code": "help_default_false",
+      "message": "Feld 'help' fehlte – auf false gesetzt."
+    }
+  ],
+  "sheet_events": [],
+  "tabs": [
+    {
+      "title": "Tabellenblatt1",
+      "sheetId": 0,
+      "index": 0,
+      "rows": 1000,
+      "cols": 26,
+      "headers": []
+    },
+    {
+      "title": "Bewerbungen",
+      "sheetId": 1057413173,
+      "index": 1,
+      "rows": 1001,
+      "cols": 26,
+      "headers": [
+        "Referenz",
+        "Stelle",
+        "Unternehmen",
+        "Datum",
+        "Kompetenzen_OK",
+        "Anschreiben_OK",
+        "Status",
+        "Standort",
+        "Kontakt",
+        "URL",
+        "Lumpensammler_OK",
+        "Naechster_Termin",
+        "Dringlichkeit",
+        "Zustaendigkeit",
+        "Kalender_ID",
+        "Design_Vorlage",
+        "Design_OK"
+      ]
+    }
+  ],
+  "context": {
+    "project_cli": "Bewerbungsteam",
+    "project_update": "Bewerbungsteam",
+    "project_effective": "Bewerbungsteam",
+    "project_source": "cli",
+    "flags": {
+      "autocreate_project": false,
+      "allow_auto_tab_create": false,
+      "allow_auto_headers": true,
+      "include_snapshots": false
+    }
+  },
+  "version": "1.9",
+  "guidance_hint": {
+    "available": true,
+    "how_to_request": "Sende in update.json zusätzlich \"request_guidance\": true (oder setze \"help\": true)."
+  },
+  "server_notes": "Alle Aktionen erfolgreich verarbeitet."
+}

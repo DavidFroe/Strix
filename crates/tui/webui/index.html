@@ -1,0 +1,1698 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Strix Web UI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg:        #0f1115;
+    --bg-elev:   #161a21;
+    --bg-soft:   #1d222b;
+    --bg-hover:  #232a35;
+    --fg:        #e6e6e6;
+    --fg-dim:    #9aa3ad;
+    --fg-faint:  #6b7480;
+    --accent:    #7dd3fc;
+    --accent-2:  #fbbf24;
+    --border:    #2a313d;
+    --user-bg:   #1e2735;
+    --tool-bg:   #1a2519;
+    --tool-fg:   #a3e635;
+    --reason-bg: #211c24;
+    --reason-fg: #c4b5fd;
+    --err:       #f87171;
+    --ok:        #86efac;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.45;
+    display: grid;
+    grid-template-rows: 48px 1fr auto;
+    grid-template-columns: 1fr 320px;
+    grid-template-areas:
+      "header header"
+      "chat   tasks"
+      "input  input";
+  }
+  header {
+    grid-area: header;
+    background: var(--bg-elev); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 14px;
+  }
+  .logo { font-weight: 600; color: var(--accent); letter-spacing: 0.5px; }
+  .workspace {
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    color: var(--fg-dim); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 360px;
+  }
+  header select, header button {
+    background: var(--bg-soft); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 10px; font: inherit; cursor: pointer;
+  }
+  header select:hover, header button:hover { background: var(--bg-hover); }
+  header .grow { flex: 1; }
+  .thread-id {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--fg-faint); padding: 2px 8px;
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .thread-id.live { color: var(--ok); border-color: var(--ok); }
+
+  .chat {
+    grid-area: chat;
+    overflow-y: auto; padding: 16px 18px;
+    scroll-behavior: smooth;
+  }
+  .msg {
+    margin-bottom: 14px;
+    border-radius: 6px; padding: 10px 12px;
+    max-width: 900px;
+  }
+  .msg.user { background: var(--user-bg); border-left: 3px solid var(--accent); }
+  .msg.agent { background: transparent; border-left: 3px solid var(--fg-faint); }
+  .msg.agent.streaming { border-left-color: var(--accent-2); }
+  .msg .role {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--fg-faint); margin-bottom: 4px;
+  }
+  .msg .content { white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user .content { color: #cfe7ff; }
+
+  /* Pro-Turn-Footer: Dauer + Token-Verbrauch unter der Antwort des
+     Modells. Klein und gedimmt, dient als Health-Indikator des Stacks. */
+  .turn-footer {
+    margin: -6px 0 12px 16px;
+    color: var(--fg-faint); font-size: 11px; font-style: italic;
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    user-select: text;
+  }
+  .turn-footer .sep { color: var(--border); margin: 0 6px; }
+  .turn-footer .slow { color: var(--accent-2); }
+  .turn-footer .very-slow { color: var(--err); }
+
+  .reasoning {
+    margin: 6px 0 4px 0;
+    background: var(--reason-bg); color: var(--reason-fg);
+    border-left: 2px solid var(--reason-fg);
+    padding: 6px 10px; border-radius: 4px;
+    font-size: 12px; line-height: 1.4;
+    position: relative;
+  }
+  .reasoning .head {
+    color: var(--reason-fg); font-weight: 500;
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .reasoning .head .chevron {
+    display: inline-block; transition: transform 0.15s;
+    font-size: 10px; opacity: 0.65;
+  }
+  .reasoning.open .head .chevron { transform: rotate(90deg); }
+  .reasoning .head .label { flex: 1; }
+  .reasoning .head .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent-2); flex-shrink: 0;
+    display: none;
+    animation: think-pulse 1.2s ease-in-out infinite;
+  }
+  .reasoning.streaming .head .pulse { display: inline-block; }
+  .reasoning.streaming .head .label::after {
+    content: ' denkt …';
+    color: var(--accent-2); font-weight: 400; font-style: italic;
+  }
+  @keyframes think-pulse {
+    0%, 100% { opacity: 0.25; transform: scale(0.85); }
+    50%      { opacity: 1;    transform: scale(1.25); }
+  }
+  /* Preview: zeigt die letzten ~2 Zeilen, italic + leicht gedimmt,
+     damit man sieht dass das Modell denkt, ohne den vollen Wall-of-Text. */
+  .reasoning .preview {
+    margin-top: 3px;
+    color: #b8a6dc; opacity: 0.78;
+    font-size: 11px; line-height: 1.4;
+    font-style: italic;
+    white-space: pre-wrap; word-wrap: break-word;
+    max-height: 2.8em; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
+            mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 100%);
+  }
+  .reasoning.open .preview { display: none; }
+  .reasoning .body {
+    margin-top: 4px; white-space: pre-wrap;
+    color: #b8a6dc; opacity: 0.92;
+    max-height: 400px; overflow-y: auto;
+    display: none;
+  }
+  .reasoning.open .body { display: block; }
+
+  /* Compaction-Summary — prominenter Block nach /compact, aufklappbar */
+  .compact-box {
+    margin: 8px 0 12px 0;
+    background: rgba(125,211,252,0.06);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .compact-box .head {
+    color: var(--accent);
+    font-weight: 600;
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px;
+  }
+  .compact-box .head .chevron {
+    display: inline-block; transition: transform 0.15s;
+    font-size: 10px;
+  }
+  .compact-box.open .head .chevron { transform: rotate(90deg); }
+  .compact-box .head .badge {
+    font-size: 10px; padding: 1px 6px;
+    border: 1px solid var(--accent); border-radius: 8px;
+    color: var(--accent);
+  }
+  .compact-box .body {
+    margin-top: 8px; white-space: pre-wrap; word-wrap: break-word;
+    color: #cfe7ff; font-size: 12.5px; line-height: 1.5;
+    max-height: 50vh; overflow-y: auto;
+  }
+  /* Default: aufgeklappt — Summary soll direkt sichtbar sein */
+  .compact-box.open .body { display: block; }
+  .compact-box:not(.open) .body { display: none; }
+
+  .tool {
+    background: var(--tool-bg); color: var(--tool-fg);
+    border-left: 2px solid var(--tool-fg);
+    padding: 6px 10px; margin: 6px 0; border-radius: 4px;
+    font-size: 12px;
+  }
+  .tool .head { cursor: pointer; user-select: none; display: flex; gap: 8px; align-items: center; }
+  .tool .head .name { font-weight: 600; font-family: ui-monospace, monospace; }
+  .tool .head .status { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid currentColor; }
+  .tool .head .status.in_progress { color: var(--accent-2); border-color: var(--accent-2); }
+  .tool .head .status.completed   { color: var(--ok); }
+  .tool .head .status.failed      { color: var(--err); border-color: var(--err); }
+  .tool .head .summary { color: #b3d68a; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+  .tool pre {
+    margin: 6px 0 0 0; padding: 6px 8px;
+    background: rgba(0,0,0,0.35); color: #d6e7c0;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    border-radius: 3px; max-height: 260px; overflow: auto;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .tool .body { display: none; }
+  .tool.open .body { display: block; }
+
+  aside.tasks {
+    grid-area: tasks;
+    background: var(--bg-elev); border-left: 1px solid var(--border);
+    overflow-y: auto; padding: 14px 12px;
+  }
+  aside.tasks h3 {
+    margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase;
+    color: var(--fg-faint); letter-spacing: 0.6px; font-weight: 600;
+  }
+  aside.tasks .task {
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 8px; margin-bottom: 6px;
+    font-size: 12px; background: var(--bg-soft);
+  }
+  aside.tasks .task .row { display: flex; gap: 6px; align-items: center; }
+  aside.tasks .task .name { font-family: ui-monospace, monospace; color: var(--tool-fg); font-weight: 500; }
+  aside.tasks .task .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  aside.tasks .task .dot.in_progress { background: var(--accent-2); animation: pulse 1.4s infinite; }
+  aside.tasks .task .dot.completed   { background: var(--ok); }
+  aside.tasks .task .dot.failed      { background: var(--err); }
+  aside.tasks .task .summary { color: var(--fg-dim); font-size: 11px; margin-top: 3px; word-break: break-all; }
+  aside.tasks .task .count {
+    display: inline-block; margin-left: auto;
+    font-size: 10px; color: var(--fg-faint);
+    padding: 0 5px; border: 1px solid var(--border); border-radius: 8px;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* Plan-Box — gerendert aus update_plan-Tool. */
+  aside.tasks .plan-box {
+    background: var(--bg-soft); border: 1px solid var(--accent);
+    border-radius: 4px; padding: 8px 10px;
+    font-size: 11.5px; margin-bottom: 8px;
+  }
+  aside.tasks .plan-box .plan-head {
+    color: var(--accent); font-weight: 600;
+    font-size: 11px; margin-bottom: 5px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  aside.tasks .plan-box .plan-head .progress {
+    font-family: ui-monospace, monospace;
+    color: var(--fg-dim); font-weight: 400;
+  }
+  aside.tasks .plan-box .plan-step {
+    display: flex; gap: 6px; align-items: flex-start;
+    padding: 2px 0; line-height: 1.35;
+  }
+  aside.tasks .plan-box .plan-step .box {
+    flex-shrink: 0; font-family: ui-monospace, monospace; width: 14px;
+  }
+  aside.tasks .plan-box .plan-step.completed .box { color: var(--ok); }
+  aside.tasks .plan-box .plan-step.in_progress .box { color: var(--accent-2); }
+  aside.tasks .plan-box .plan-step.pending .box { color: var(--fg-faint); }
+  aside.tasks .plan-box .plan-step.completed .label {
+    color: var(--fg-faint); text-decoration: line-through;
+  }
+  aside.tasks .plan-box .plan-step.in_progress .label {
+    color: var(--fg); font-weight: 500;
+  }
+  aside.tasks .plan-box .plan-step .label { color: var(--fg-dim); flex: 1; word-wrap: break-word; min-width: 0; }
+  aside.tasks .plan-box .expl {
+    color: var(--fg-faint); font-style: italic;
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px dashed var(--border);
+    font-size: 10.5px;
+  }
+
+  /* Checklist-Box — Markdown-Checkboxes aus Agent-Messages extrahiert. */
+  aside.tasks .checklist {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 8px;
+    font-size: 11.5px; margin-bottom: 6px;
+  }
+  aside.tasks .checklist .cl-item {
+    display: flex; gap: 6px; align-items: flex-start;
+    padding: 2px 0; line-height: 1.35;
+  }
+  aside.tasks .checklist .cl-item .box {
+    flex-shrink: 0; font-family: ui-monospace, monospace;
+    width: 12px;
+  }
+  aside.tasks .checklist .cl-item.done .box { color: var(--ok); }
+  aside.tasks .checklist .cl-item.todo .box { color: var(--accent-2); }
+  aside.tasks .checklist .cl-item.done .label {
+    color: var(--fg-faint); text-decoration: line-through;
+  }
+  aside.tasks .checklist .cl-item .label {
+    color: var(--fg-dim); word-wrap: break-word; min-width: 0; flex: 1;
+  }
+
+  aside.tasks .usage {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--fg-dim);
+  }
+  aside.tasks .usage .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  aside.tasks .usage .row .v { color: var(--fg); }
+
+  /* Kontext-Auslastungs-Bar */
+  .ctx-bar {
+    height: 8px; background: var(--bg-soft);
+    border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden; margin-top: 4px;
+  }
+  .ctx-bar-fill {
+    height: 100%; width: 0%;
+    background: var(--ok);
+    transition: width 0.3s ease-out, background 0.15s;
+  }
+  .ctx-bar-fill.warn { background: var(--accent-2); }
+  .ctx-bar-fill.crit { background: var(--err); }
+  .ctx-bar-text {
+    font-family: ui-monospace, monospace; font-size: 10px;
+    color: var(--fg-faint); margin-top: 3px;
+    display: flex; justify-content: space-between;
+  }
+  .ctx-bar-text .pct { color: var(--fg-dim); }
+
+  .input-area {
+    grid-area: input;
+    background: var(--bg-elev); border-top: 1px solid var(--border);
+    padding: 10px 14px;
+    display: flex; gap: 10px; align-items: flex-end;
+  }
+  .input-area textarea {
+    flex: 1; resize: none;
+    background: var(--bg-soft); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font: inherit; min-height: 38px; max-height: 200px;
+  }
+  .input-area textarea:focus { outline: none; border-color: var(--accent); }
+  .input-area button {
+    background: var(--accent); color: #0a0e15;
+    border: none; border-radius: 6px;
+    padding: 8px 16px; cursor: pointer; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-width: 92px; justify-content: center;
+    transition: background 0.12s;
+  }
+  .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* Stop-Modus während ein Turn läuft */
+  #send.busy {
+    background: var(--err); color: #fff;
+    /* Sanfter Pulse damit klar ist: "läuft gerade" */
+    animation: btn-busy-pulse 1.4s ease-in-out infinite;
+  }
+  #send.busy:hover { background: #ef4040; animation: none; }
+  #send .icon { font-size: 12px; line-height: 1; }
+  @keyframes btn-busy-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.55); }
+    50%      { box-shadow: 0 0 0 8px rgba(248,113,113,0); }
+  }
+
+  /* "Scroll to bottom"-Floating-Knopf für wenn der User hochgescrollt hat
+     während neue Inhalte unten ankommen. */
+  #scroll-bottom-btn {
+    position: absolute; right: 22px; bottom: 78px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--bg-elev); color: var(--fg);
+    border: 1px solid var(--border);
+    cursor: pointer; font-size: 16px;
+    display: none; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    z-index: 10;
+  }
+  #scroll-bottom-btn.visible { display: flex; }
+  #scroll-bottom-btn:hover { background: var(--bg-hover); }
+  #scroll-bottom-btn .new-dot {
+    position: absolute; top: -2px; right: -2px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent-2); display: none;
+  }
+  #scroll-bottom-btn.has-new .new-dot { display: block; }
+
+  .empty-state {
+    text-align: center; color: var(--fg-faint); padding: 40px 20px;
+  }
+  .empty-state code {
+    background: var(--bg-soft); padding: 2px 6px; border-radius: 3px;
+    font-family: ui-monospace, monospace; color: var(--accent);
+  }
+  .banner-err {
+    background: rgba(248,113,113,0.1); color: var(--err);
+    border-left: 3px solid var(--err); padding: 8px 12px;
+    margin: 8px 0; font-size: 12px; border-radius: 3px;
+  }
+
+  /* Pro-Forma-Animation direkt unter dem User-Block, bis der erste
+     item.started vom Strix-Server reinkommt. Zeigt "strix denkt …" mit
+     drei pulsierenden Dots — User weiß sofort, dass die Eingabe ankam. */
+  .thinking-placeholder {
+    padding: 10px 14px;
+    margin: 4px 0 12px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    border-left: 3px solid var(--accent-2);
+    background: rgba(251,191,36,0.05);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .thinking-placeholder .label { opacity: 0.85; }
+  .thinking-placeholder .dots {
+    display: inline-flex; gap: 4px;
+  }
+  .thinking-placeholder .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-2);
+    animation: think-bounce 1.2s ease-in-out infinite;
+  }
+  .thinking-placeholder .dot:nth-child(2) { animation-delay: 0.15s; }
+  .thinking-placeholder .dot:nth-child(3) { animation-delay: 0.30s; }
+  @keyframes think-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">strix</span>
+  <span class="workspace" id="workspace" title="">…</span>
+  <span style="font-size:10px; opacity:0.55; margin-left:8px; font-family:monospace;"
+        title="Strix-Version + Build-Zeit — falls hier veraltete Zeit steht: harter Reload (Strg+Shift+R)">
+    <!--STRIX_VERSION_STAMP-->
+  </span>
+  <span class="grow"></span>
+  <select id="model-select" title="Modell für neue Sessions"></select>
+  <button id="compress-btn" title="Kontext zusammenfassen (POST /compact) — gibt Token-Budget zurück">⇲ Kompress</button>
+  <button id="new-session" title="Neue Session starten">+ Neue Session</button>
+  <button id="purge-thread-btn" title="Diesen Thread aus der Browser-Anzeige UND aus der DB entfernen (irreversibel)"
+          style="background: var(--err); color: white;">🗑 Thread löschen</button>
+  <span class="thread-id" id="thread-id">kein Thread</span>
+</header>
+
+<section class="chat" id="chat">
+  <div class="empty-state">
+    <p>Bereit. Tippe unten einen Prompt — Strix legt automatisch einen Thread an.</p>
+    <p style="font-size:11px">Modell wechseln: oben rechts. Neue Session: <code>+ Neue Session</code>.</p>
+  </div>
+</section>
+
+<aside class="tasks">
+  <h3>Plan</h3>
+  <div id="plan-box" class="plan-box" style="display:none;"></div>
+
+  <h3 style="margin-top: 14px;">Checkliste</h3>
+  <div id="checklist-box" class="checklist" style="display:none;"></div>
+
+  <h3 style="margin-top: 14px;">Letzte Tools</h3>
+  <div id="tasks-list"></div>
+
+  <h3 style="margin-top: 18px;">Kontext-Auslastung</h3>
+  <div class="ctx-bar"><div id="ctx-bar-fill" class="ctx-bar-fill"></div></div>
+  <div class="ctx-bar-text">
+    <span id="ctx-tokens">— / —</span>
+    <span class="pct" id="ctx-pct">0%</span>
+  </div>
+
+  <h3 style="margin-top: 18px;">Token-Usage (akt. Thread)</h3>
+  <div id="usage" class="usage">
+    <div class="row"><span>input</span>      <span class="v" id="u-input">0</span></div>
+    <div class="row"><span>output</span>     <span class="v" id="u-output">0</span></div>
+    <div class="row"><span>reasoning</span>  <span class="v" id="u-reasoning">0</span></div>
+    <div class="row"><span>cache hit</span>  <span class="v" id="u-cache-hit">0</span></div>
+    <div class="row"><span>turns</span>      <span class="v" id="u-turns">0</span></div>
+  </div>
+</aside>
+
+<button id="scroll-bottom-btn" title="Nach unten scrollen">↓<span class="new-dot"></span></button>
+
+<div class="input-area">
+  <textarea id="prompt" placeholder="Frage / Aufgabe… (Enter = senden, Shift+Enter = Zeilenumbruch)" rows="1"></textarea>
+  <button id="send" title="Senden (Enter)"><span class="icon">▶</span><span class="label">Send</span></button>
+</div>
+
+<script>
+  // ─── State ────────────────────────────────────────────────────────────────
+  const API = window.location.origin;
+  window.onerror = (msg, src, line, col, err) => {
+    const b = document.createElement('div');
+    b.className = 'banner-err';
+    b.textContent = `JS-Fehler Zeile ${line}: ${msg}`;
+    b.style.position = 'fixed'; b.style.top = '0'; b.style.zIndex = '9999';
+    document.body.prepend(b);
+  };
+  let threadId    = null;
+  let currentTurnId = null;      // gerade laufender Turn (für /interrupt)
+  let eventSource = null;
+  let currentMsgId = null;       // active agent_message item_id
+  let currentMsgEl = null;       // DOM-element for current agent message
+  let currentReasoningId = null;
+  let currentReasoningEl = null;
+  let toolEls = new Map();       // item_id -> { mainEl, sideEl }
+  let currentCompactEl = null;   // active context-compaction box during streaming
+  // Wenn wir gerade auf einen Compact-Turn warten: agent_message
+  // dieses Turns als Compact-Summary rendern (nicht als normales Strix-Msg).
+  let expectingCompactSummary = false;
+  // Sidebar-Dedup: pro Tool-Name nur ein Eintrag, mit Count. Mapping
+  // bleibt unabhängig von toolEls (das ist per item_id, sidebar-Slot
+  // ist per Tool-Name).
+  let sideToolByName = new Map(); // name -> { el, count }
+  // Checklist aggregiert über alle Agent-Messages dieses Threads.
+  // map: text → boolean(checked)
+  let checklist = new Map();
+  let usage = { input:0, output:0, reasoning:0, cacheHit:0, turns:0 };
+  let sending = false;
+  // Modell-Context-Windows (id → tokens). Wird aus /v1/models befüllt,
+  // plus die lokalen owltrail-Aliase als Fallback (die tauchen nicht in
+  // /v1/models auf, weil sie pure Strix-Conf-Mappings sind).
+  const modelCtxMap = new Map([
+    ['deepseek-v4-pro',      1048576],
+    ['deepseek-v4-flash',    1048576],
+    ['ollama-qwen3.6-27b',     97000],
+    ['ollama-qwen3.6-35b',     32768],
+    ['opus',                  200000],   // Claude Opus 4.7
+    ['sonnet',                200000],   // Claude Sonnet 4.7
+    ['haiku',                 200000],   // Claude Haiku 4.7
+    ['120',                    97000],
+    ['250',                  1048576],
+    ['251',                  1048576],
+    ['242',                    32768],
+    ['22',                    200000],
+    ['21',                    200000],
+    ['20',                    200000],
+    ['free',                   32768],
+  ]);
+  let lastInputTokens = 0;
+
+  // Team-Presets: Name → {model: Master-Modell, sub: Subagent-Modell}
+  // Entspricht den TUI-Presets (Tab-Cycler). Alle IDs geprüft gegen
+  // owltrail /v1/models — numerische IDs werden direkt durchgereicht.
+  const PRESET_MAP = {
+    'DeepSeek':   {model:'deepseek-v4-pro',   sub:'deepseek-v4-flash'},      // 251 / 250
+    'Claude':     {model:'opus',              sub:'sonnet'},                   // 22 / 21
+    'Grok':       {model:'xai-grok-4.3',      sub:'xai-grok-4.3'},           // 113 / 113
+    'Gemini':     {model:'gemini-2.5-flash',  sub:'gemini-3-flash-preview'},  // 502 / 500
+    'GPT':        {model:'openai-gpt-4.1',    sub:'openai-gpt-4o'},           // 70 / 73
+    'Qwen':       {model:'alibaba-qwen3-max', sub:'alibaba-qwen3-32b'},       // 31 / 40
+    'Free':       {model:'free',              sub:'free'},
+    'Local':      {model:'120',               sub:'56'},                       // Qwen3.6-27B / Qwen3.5-9B
+  };
+  let subagentModel = 'deepseek-v4-flash';
+
+  // Smart-Scroll: nur automatisch nachscrollen wenn der User schon
+  // (fast) am unteren Rand ist. Wenn er manuell hochgescrollt hat,
+  // lassen wir ihn in Ruhe und zeigen stattdessen den "↓"-Knopf.
+  let stickToBottom = true;
+  const STICK_THRESHOLD_PX = 80;
+
+  const $ = (id) => document.getElementById(id);
+  const chat = $('chat');
+
+  // ─── Send/Stop button state ───────────────────────────────────────────────
+  function setBusy(busy) {
+    sending = busy;
+    const btn = $('send');
+    if (!btn) { console.warn('setBusy: #send button fehlt'); return; }
+    // Defensive: wenn .icon/.label-Spans fehlen (z.B. browser-cached
+    // älteres Markup), nicht crashen — Button-Text direkt setzen.
+    const icon  = btn.querySelector('.icon');
+    const label = btn.querySelector('.label');
+    if (busy) {
+      btn.classList.add('busy');
+      btn.disabled = false;
+      btn.title = 'Aktuelle Anfrage abbrechen';
+      if (icon)  icon.textContent  = '■'; else btn.textContent = '■ Stop';
+      if (label) label.textContent = 'Stop';
+    } else {
+      // Turn ist fertig → Denken-Animation auf jeden Fall weg
+      hideThinkingPlaceholder();
+      btn.classList.remove('busy');
+      btn.disabled = false;
+      btn.title = 'Senden (Enter)';
+      if (icon)  icon.textContent  = '▶'; else btn.textContent = '▶ Send';
+      if (label) label.textContent = 'Send';
+    }
+  }
+
+  // ─── Smart auto-scroll ────────────────────────────────────────────────────
+  function isNearBottom() {
+    return chat.scrollHeight - chat.scrollTop - chat.clientHeight < STICK_THRESHOLD_PX;
+  }
+  function maybeStickScroll() {
+    if (stickToBottom) {
+      // Direkter Scroll — NICHT maybeStickScroll() rekursiv aufrufen!
+      chat.scrollTop = chat.scrollHeight;
+    } else {
+      // User ist hochgescrollt → "↓ neue Inhalte"-Knopf zeigen
+      const btn = $('scroll-bottom-btn');
+      if (btn) btn.classList.add('visible', 'has-new');
+    }
+  }
+  chat.addEventListener('scroll', () => {
+    stickToBottom = isNearBottom();
+    const btn = $('scroll-bottom-btn');
+    if (stickToBottom) {
+      btn.classList.remove('visible', 'has-new');
+    } else {
+      btn.classList.add('visible');
+    }
+  });
+  $('scroll-bottom-btn').addEventListener('click', () => {
+    stickToBottom = true;
+    maybeStickScroll();
+    $('scroll-bottom-btn').classList.remove('visible', 'has-new');
+  });
+
+  // ─── Stop / interrupt ─────────────────────────────────────────────────────
+  // Robust: lokaler UI-Reset passiert IMMER, auch wenn der Server-Call
+  // fehlschlägt oder der Server stumm bleibt. Sonst landet der User in
+  // einem "Stop-Knopf gedrückt aber nichts passiert"-Limbo.
+  async function stopCurrentTurn() {
+    const tid = currentTurnId;
+    const threadIdSnap = threadId;
+    // Lokaler Reset SOFORT, damit der User weitertippen kann.
+    setBusy(false);
+    currentTurnId = null;
+    clearStallWatchdog();
+    hideStallBanner();
+    if (!threadIdSnap || !tid) return;
+    try {
+      await fetch(`${API}/v1/threads/${threadIdSnap}/turns/${tid}/interrupt`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: '{}',
+      });
+    } catch (e) {
+      console.warn('interrupt failed (UI bereits zurückgesetzt)', e);
+    }
+  }
+
+  // ─── Stall-Watchdog ───────────────────────────────────────────────────────
+  // Bei jedem SSE-Event ticken wir lastEventAt hoch. Wenn währen ein Turn
+  // läuft länger als STALL_S Sekunden nichts mehr ankommt, zeigen wir einen
+  // dezenten Banner mit "Stop drücken" als Ausweg.
+  let lastEventAt = 0;
+  let stallTimer = null;
+  let stallBannerEl = null;
+  const STALL_S = 120;    // 120 s — genug Zeit für Reasoning bei dichtem Kontext
+  function noteEvent() {
+    lastEventAt = Date.now();
+    hideStallBanner();
+  }
+  function startStallWatchdog() {
+    clearStallWatchdog();
+    lastEventAt = Date.now();
+    stallTimer = setInterval(() => {
+      if (!sending) { clearStallWatchdog(); return; }
+      const elapsedS = (Date.now() - lastEventAt) / 1000;
+      if (elapsedS > STALL_S && !stallBannerEl) {
+        showStallBanner(elapsedS);
+      }
+    }, 2000);
+  }
+  function clearStallWatchdog() {
+    if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+  }
+  function showStallBanner(elapsedS) {
+    if (stallBannerEl) return;
+    stallBannerEl = document.createElement('div');
+    stallBannerEl.className = 'banner-err';
+    stallBannerEl.style.cursor = 'pointer';
+    stallBannerEl.innerHTML =
+      `⚠ Seit ${Math.round(elapsedS)} s nichts mehr empfangen. ` +
+      `Klick hier oder drück <kbd>Esc</kbd>/<b>Stop</b>, um den Turn ` +
+      `lokal abzubrechen und einen neuen Prompt einzugeben.`;
+    stallBannerEl.addEventListener('click', () => stopCurrentTurn());
+    chat.appendChild(stallBannerEl);
+    maybeStickScroll();
+  }
+  function hideStallBanner() {
+    if (stallBannerEl) {
+      stallBannerEl.remove();
+      stallBannerEl = null;
+    }
+  }
+
+  // ─── Bootstrap: workspace, models ─────────────────────────────────────────
+  async function bootstrap() {
+    try {
+      const r = await fetch(`${API}/v1/workspace/status`);
+      if (r.ok) {
+        const d = await r.json();
+        const ws = d.workspace || d.path || '?';
+        $('workspace').textContent = ws;
+        $('workspace').title = ws;
+      }
+    } catch (e) { $('workspace').textContent = '(workspace unavailable)'; }
+
+    try {
+      const r = await fetch(`${API}/v1/runtime/info`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d.workspace && !$('workspace').textContent.length) {
+          $('workspace').textContent = d.workspace;
+        }
+      }
+    } catch (e) {}
+
+    // Models — proxied through the strix HTTP server so the browser only
+    // needs to reach one origin (works over VPN without exposing port 8081).
+    // Presets (incl. lokale owltrail-Aliase) sind immer oben — die Liste vom
+    // Upstream-Provider folgt darunter und kann auch lange/Provider-Modelle
+    // enthalten die nicht in den Presets stehen.
+    const sel = $('model-select');
+    sel.innerHTML = '';
+    for (const name of Object.keys(PRESET_MAP)) {
+      const o = document.createElement('option'); o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    }
+    // Restore last preset
+    try { sel.value = localStorage.getItem('strix-preset') || 'DeepSeek'; } catch(e) {}
+    subagentModel = PRESET_MAP[sel.value]?.sub || 'deepseek-v4-flash';
+    try {
+      const r = await fetch(`${API}/v1/models`);
+      if (r.ok) {
+        const d = await r.json();
+        const sep = document.createElement('option');
+        sep.disabled = true; sep.textContent = '─── Upstream ───';
+        sel.appendChild(sep);
+        const presetModels = new Set(Object.values(PRESET_MAP).flatMap(p => [p.model, p.sub]));
+        const known = (d.data || []).map(m => ({
+          id: m.id || String(m.numerical_id || '?'),
+          ctx: m.context_window || 0,
+        }));
+        known.sort((a, b) => a.id.localeCompare(b.id));
+        for (const k of known) {
+          // Auch presets von Live-Daten lernen (überschreibt Fallback wenn größer)
+          if (k.ctx > 0) modelCtxMap.set(k.id, k.ctx);
+          if (presetModels.has(k.id)) continue;
+          const o = document.createElement('option');
+          o.value = k.id;
+          o.textContent = k.ctx ? `${k.id}  (ctx ${(k.ctx/1024).toFixed(0)}K)` : k.id;
+          sel.appendChild(o);
+        }
+      }
+    } catch (e) {
+      // Presets are already populated — no-op.
+    }
+    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+    updateCtxBar();
+  }
+
+  // ─── Kontext-Auslastungs-Bar ─────────────────────────────────────────────
+  function ctxWindowFor(model) {
+    return modelCtxMap.get(model) || 32768;
+  }
+  function resolveModel() {
+    const v = $('model-select')?.value || '';
+    return PRESET_MAP[v]?.model || v;
+  }
+  function updateCtxBar() {
+    const m = resolveModel();
+    const cap = ctxWindowFor(m);
+    const used = lastInputTokens;
+    const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+    const fill = $('ctx-bar-fill');
+    fill.style.width = pct + '%';
+    fill.classList.remove('warn', 'crit');
+    if (pct >= 85) fill.classList.add('crit');
+    else if (pct >= 60) fill.classList.add('warn');
+    const tokStr = `${used.toLocaleString('de-DE')} / ${cap.toLocaleString('de-DE')}`;
+    $('ctx-tokens').textContent = tokStr;
+    $('ctx-pct').textContent = pct.toFixed(0) + '%';
+  }
+
+  // ─── Auto-Resume beim Page-Load ──────────────────────────────────────────
+  // Holt den jüngsten Thread für dieses Workspace und replay'd dessen Events.
+  // ABER: nur die letzten N Turns werden ins DOM gerendert (konstanter
+  // Speicher-Verbrauch unabhängig von der History-Länge). Ältere Turns
+  // bleiben in der DB persistent, nur eben nicht alle gleichzeitig in der
+  // Browser-DOM. Wenn der Thread ein Compact-Item hat, hat das Vorrang
+  // (Compact-Box + alles dahinter, älteres wird unterdrückt).
+  const REPLAY_TURN_LIMIT = 1;
+  let replayWhitelistTurns = null;   // null = alle (Live-Mode);
+                                     // Set<turnId> = nur diese rendern
+  let replayLatestInputTokens = 0;   // input_tokens des allerletzten Turns
+                                     // — wird einmal final gesetzt, nicht per Event
+
+  async function autoResumeLatestThread() {
+    try {
+      const r = await fetch(`${API}/v1/threads`);
+      if (!r.ok) return;
+      const threads = await r.json();
+      if (!Array.isArray(threads) || threads.length === 0) return;
+      const latest = threads[0];
+      if (!latest || !latest.id) return;
+      threadId = latest.id;
+      $('thread-id').textContent = latest.id;
+      $('thread-id').classList.add('live');
+
+      // Thread-Detail holen → Turn-Liste, daraus die letzten N als Whitelist.
+      let turnList = [];
+      try {
+        const dr = await fetch(`${API}/v1/threads/${latest.id}`);
+        if (dr.ok) {
+          const detail = await dr.json();
+          turnList = Array.isArray(detail.turns) ? detail.turns : [];
+        }
+      } catch (e) { /* ignore — fällt auf "alle Events" zurück */ }
+
+      // Turns chronologisch sortieren (älteste zuerst)
+      turnList.sort((a, b) =>
+        (a.created_at || '').localeCompare(b.created_at || '')
+      );
+      // Strategie: NICHTS aus der History rendern. Komplett leerer Chat
+      // beim Reload. Egal wie viele Turns/Items in der DB liegen — wir
+      // streamen sie nicht in den Browser zurück. Der Server-Kontext ist
+      // davon unbetroffen (DB enthält alle Turns weiter; Compaction-State
+      // ist serverseitig persistent).
+      //
+      // Folge: Beim Reload sieht der User einen leeren Chat mit Banner
+      // ("X Turns in DB"). Sobald er was tippt, startet ein neuer Turn,
+      // dessen Events live gerendert werden (per whitelistTurn-Call in
+      // submit()).
+      //
+      // Älteres ist in der DB einsehbar: strix verlauf list / export.
+      const trimmed = [];
+      // Letzter Turn nur für die Context-Bar relevant (input_tokens-Wert)
+      let compactIdx = -1;
+      const lastTurn = turnList.length > 0 ? turnList[turnList.length - 1] : null;
+      if (lastTurn) {
+        const lastSum = (lastTurn.input_summary || '').toLowerCase();
+        if (lastSum.includes('compact') ||
+            lastSum.includes('compress') ||
+            lastSum.includes('compaction')) {
+          compactIdx = turnList.length - 1;
+        }
+        const u = lastTurn.usage || {};
+        replayLatestInputTokens = u.input_tokens || 0;
+        lastInputTokens = replayLatestInputTokens;
+      }
+      // Empty whitelist → shouldRenderEvent gibt für alle Turn-Events false zurück.
+      // Nur Thread-Level-Events (turn_id=null) und in submit() per whitelistTurn()
+      // hinzugefügte neue Turns rendern.
+      replayWhitelistTurns = new Set();
+
+      const empty = chat.querySelector('.empty-state');
+      if (empty) empty.remove();
+      if (latest.model) {
+        const sel = $('model-select');
+        // Suche Preset-Name der auf latest.model matched
+        let found = false;
+        for (const [name, p] of Object.entries(PRESET_MAP)) {
+          if (p.model === latest.model) { sel.value = name; found = true; break; }
+        }
+        if (!found) {
+          for (const o of sel.options) {
+            if (o.value === latest.model) { sel.value = latest.model; found = true; break; }
+          }
+        }
+      }
+
+      // Status-Banner vor dem Replay
+      const banner = document.createElement('div');
+      banner.className = 'banner-err';
+      banner.style.background = 'rgba(125,211,252,0.08)';
+      banner.style.color = 'var(--accent)';
+      banner.style.borderLeftColor = 'var(--accent)';
+      banner.style.fontSize = '11px';
+      const compactNote = compactIdx >= 0 ? ' · letzter Turn war Compact' : '';
+      const ctxPct = lastInputTokens > 0
+        ? ` · letzte Kontext-Auslastung: ${Math.round(lastInputTokens / 1048576 * 100)}%`
+        : '';
+      banner.innerHTML =
+        `↻ Thread ${latest.id} fortgesetzt — <b>${turnList.length} Turns in DB${compactNote}</b>`
+        + ctxPct
+        + `<br><span style="font-size:10px; opacity:0.65">Verlauf wird nicht angezeigt (in DB erhalten). Neue Eingabe startet neuen Turn.</span>`;
+      console.log('[autoResume]', {
+        thread: latest.id,
+        total_turns: turnList.length,
+        compact_idx: compactIdx,
+        whitelist_size: 0,
+        last_input_tokens: lastInputTokens,
+      });
+      chat.appendChild(banner);
+      setTimeout(() => banner.remove(), 30000);
+
+      openStream(0);
+      updateCtxBar();
+    } catch (e) {
+      console.warn('autoResume fehlgeschlagen:', e);
+    }
+  }
+
+  // True wenn ein Event basierend auf der Whitelist gerendert werden soll.
+  // Live-Mode (replayWhitelistTurns null) → immer ja.
+  function shouldRenderEvent(ev) {
+    if (!replayWhitelistTurns) return true;
+    const tid = ev.turn_id;
+    if (!tid) return true;        // thread-Level Events durchlassen
+    return replayWhitelistTurns.has(tid);
+  }
+  // Live-Turns (z.B. neue user-prompt nach Resume) sofort whitelisten,
+  // damit sie ebenfalls gerendert werden.
+  function whitelistTurn(turnId) {
+    if (replayWhitelistTurns && turnId) replayWhitelistTurns.add(turnId);
+  }
+
+  // ─── Compress (Kontext-Compact) ──────────────────────────────────────────
+  async function compressContext() {
+    if (!threadId) {
+      const b = document.createElement('div');
+      b.className = 'banner-err';
+      b.textContent = 'Kein aktiver Thread — Kompress nicht möglich.';
+      chat.appendChild(b);
+      return;
+    }
+    if (sending) {
+      // Während laufendem Turn nicht kompaktieren (Backend würde 409 werfen).
+      return;
+    }
+    setBusy(true);
+    startStallWatchdog();
+    try {
+      const r = await fetch(`${API}/v1/threads/${threadId}/compact`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ reason: 'webui compact-context' }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      const j = await r.json();
+      currentTurnId = (j.turn && j.turn.id) || null;
+      whitelistTurn(currentTurnId);
+
+      // ── Browser-Aufräumen ─────────────────────────────────────────────
+      // Compact läuft jetzt SERVER-seitig (alter Kontext → Summary).
+      // Im Browser den alten Verlauf aus dem DOM raus — auf schwachen
+      // Maschinen wird langer Chat sonst extrem zäh.  Token-Usage und
+      // Checkliste bleiben (cumulativer Thread-State); Chat + Tools-Sidebar
+      // werden gecleart, damit gleich nur noch das Summary streamt.
+      chat.innerHTML = '';
+      $('tasks-list').innerHTML = '';
+      toolEls.clear();
+      sideToolByName.clear();
+      currentMsgId = currentMsgEl = null;
+      currentReasoningId = currentReasoningEl = null;
+      currentCompactEl = null;
+      // Flag setzen → der nächste agent_message-Item dieses Turns
+      // wird in die Compact-Box statt als normale Antwort gerendert.
+      expectingCompactSummary = true;
+      // Ein dezenter Marker damit klar ist was passiert ist
+      const marker = document.createElement('div');
+      marker.className = 'banner-err';
+      marker.id = 'compress-marker';
+      marker.style.background = 'rgba(125,211,252,0.08)';
+      marker.style.color = 'var(--accent)';
+      marker.style.borderLeftColor = 'var(--accent)';
+      marker.style.fontSize = '11px';
+      marker.textContent = '↳ Komprimiere Kontext';
+      chat.appendChild(marker);
+      maybeStickScroll();
+      // ── Kompress-Animation ────────────────────────────────────────────
+      let dots = 0;
+      const compressAnim = setInterval(() => {
+        dots = (dots + 1) % 4;
+        const m = document.getElementById('compress-marker');
+        if (m) m.textContent = '↳ Komprimiere Kontext' + '.'.repeat(dots);
+        else clearInterval(compressAnim);
+      }, 500);
+      // Nach dem Summary-Event stoppen (wird in handleEvent erledigt)
+      window._compressAnim = compressAnim;
+      // Stream-Events vom Compact-Turn (reasoning + summary) kommen jetzt durch
+    } catch (e) {
+      if (window._compressAnim) { clearInterval(window._compressAnim); window._compressAnim = null; }
+      const cm = document.getElementById('compress-marker');
+      if (cm) cm.remove();
+      const b = document.createElement('div');
+      b.className = 'banner-err';
+      b.textContent = 'Kompress fehlgeschlagen: ' + e.message;
+      chat.appendChild(b);
+      maybeStickScroll();
+      setBusy(false);
+      clearStallWatchdog();
+    }
+  }
+
+  // ─── Thread management ──────────────────────────────────────────────────────
+  async function createThread() {
+    const model = resolveModel();
+    const r = await fetch(`${API}/v1/threads`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model, subagent_model: subagentModel, mode: 'agent', auto_approve: true, allow_shell: true, trust_mode: true,
+      }),
+    });
+    if (!r.ok) throw new Error(`Thread-Create HTTP ${r.status}: ${await r.text()}`);
+    const t = await r.json();
+    threadId = t.id;
+    $('thread-id').textContent = threadId;
+    $('thread-id').classList.add('live');
+    return threadId;
+  }
+
+  function clearChat() {
+    chat.innerHTML = '';
+    $('tasks-list').innerHTML = '';
+    toolEls.clear();
+    sideToolByName.clear();
+    checklist.clear();
+    renderChecklist();
+    $('plan-box').style.display = 'none';
+    $('plan-box').innerHTML = '';
+    replayWhitelistTurns = null;     // frische Session → alles rendern
+    usage = { input:0, output:0, reasoning:0, cacheHit:0, turns:0 };
+    lastInputTokens = 0;
+    renderUsage();
+    updateCtxBar();
+    currentMsgId = currentMsgEl = currentReasoningId = currentReasoningEl = null;
+  }
+
+  function renderUsage() {
+    $('u-input').textContent = usage.input.toLocaleString('de-DE');
+    $('u-output').textContent = usage.output.toLocaleString('de-DE');
+    $('u-reasoning').textContent = usage.reasoning.toLocaleString('de-DE');
+    $('u-cache-hit').textContent = usage.cacheHit.toLocaleString('de-DE');
+    $('u-turns').textContent = usage.turns;
+  }
+
+  // ─── DOM helpers ─────────────────────────────────────────────────────────
+  // Pro-Forma-Animation unter dem User-Block: zeigt sofort dass der
+  // Server die Eingabe bekommen hat, bis der erste item.started reinkommt.
+  let thinkingEl = null;
+  function showThinkingPlaceholder() {
+    if (thinkingEl) return;        // schon da
+    thinkingEl = document.createElement('div');
+    thinkingEl.className = 'thinking-placeholder';
+    thinkingEl.innerHTML = `
+      <span class="label">strix denkt</span>
+      <span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+    `;
+    chat.appendChild(thinkingEl);
+    maybeStickScroll();
+  }
+  function hideThinkingPlaceholder() {
+    if (!thinkingEl) return;
+    thinkingEl.remove();
+    thinkingEl = null;
+  }
+
+  function appendUserMsg(text, itemId) {
+    const el = document.createElement('div');
+    el.className = 'msg user';
+    if (itemId) el.dataset.itemId = itemId;
+    else el.dataset.pending = '1';
+    el.innerHTML = `<div class="role">you</div><div class="content"></div>`;
+    el.querySelector('.content').textContent = text;
+    chat.appendChild(el);
+    maybeStickScroll();
+    return el;
+  }
+  function startAgentMsg(itemId) {
+    const el = document.createElement('div');
+    el.className = 'msg agent streaming';
+    el.dataset.itemId = itemId;
+    el.innerHTML = `<div class="role">strix</div><div class="content"></div>`;
+    chat.appendChild(el);
+    maybeStickScroll();
+    return el;
+  }
+  function startReasoning(itemId) {
+    const el = document.createElement('div');
+    el.className = 'reasoning streaming';
+    el.dataset.itemId = itemId;
+    el.innerHTML = `
+      <div class="head">
+        <span class="chevron">▸</span>
+        <span class="label">Reasoning</span>
+        <span class="pulse"></span>
+      </div>
+      <div class="preview"></div>
+      <div class="body"></div>`;
+    el.querySelector('.head').addEventListener('click', () => {
+      el.classList.toggle('open');
+    });
+    chat.appendChild(el);
+    return el;
+  }
+
+  // Refresh the visible "tail" (last ~2 lines) of a reasoning block from
+  // its full body. Cheap enough to call on every delta — line-clamp would
+  // show the FIRST lines, so we extract the tail manually and let the
+  // mask-image gradient softly fade the top.
+  function refreshReasoningPreview(el) {
+    const full = el.querySelector('.body').textContent || '';
+    // last 240 chars, trimmed at first newline so we start on a clean line
+    let tail = full.length > 240 ? full.slice(-240) : full;
+    const nl = tail.indexOf('\n');
+    if (nl > 0 && nl < tail.length - 60) tail = tail.slice(nl + 1);
+    el.querySelector('.preview').textContent = tail.trim();
+  }
+  function startCompactBox(item) {
+    const el = document.createElement('div');
+    el.className = 'compact-box open';
+    el.dataset.itemId = item.id;
+    el.innerHTML = `
+      <div class="head">
+        <span class="chevron">▸</span>
+        <span class="title">⇲ Kontext-Zusammenfassung</span>
+        <span class="badge">live</span>
+      </div>
+      <div class="body"></div>`;
+    el.querySelector('.head').addEventListener('click', () => {
+      el.classList.toggle('open');
+      el.querySelector('.chevron').textContent =
+        el.classList.contains('open') ? '▾' : '▸';
+    });
+    // chevron initial richtig setzen
+    el.querySelector('.chevron').textContent = '▾';
+    chat.appendChild(el);
+    maybeStickScroll();
+    // initial detail einsetzen falls da
+    if (item.detail) el.querySelector('.body').textContent = item.detail;
+    return el;
+  }
+  function finalizeCompactBox(el, item) {
+    if (!el) return;
+    const body = el.querySelector('.body');
+    // detail überschreibt — bei "completed" ist das die finale Zusammenfassung
+    if (item.detail) body.textContent = item.detail;
+    const badge = el.querySelector('.badge');
+    if (badge) {
+      badge.textContent = item.status === 'failed' ? 'fail' : 'fertig';
+      if (item.status === 'failed') {
+        badge.style.color = 'var(--err)';
+        badge.style.borderColor = 'var(--err)';
+        el.style.borderColor = 'var(--err)';
+      }
+    }
+    maybeStickScroll();
+  }
+
+  function startToolBlock(item) {
+    const summary = item.summary || item.detail || item.kind || '';
+    const block = document.createElement('div');
+    block.className = 'tool';
+    block.dataset.itemId = item.id;
+    const inputArgs = item.metadata?.input || item.metadata?.args || null;
+    block.innerHTML = `
+      <div class="head">
+        <span class="name">${escapeHtml(extractToolName(item))}</span>
+        <span class="status in_progress">running</span>
+        <span class="summary">${escapeHtml(summary).slice(0, 200)}</span>
+      </div>
+      <div class="body">
+        ${inputArgs ? `<pre>${escapeHtml(JSON.stringify(inputArgs, null, 2))}</pre>` : ''}
+        <div class="output-slot"></div>
+      </div>`;
+    block.querySelector('.head').addEventListener('click', () => block.classList.toggle('open'));
+    chat.appendChild(block);
+    maybeStickScroll();
+
+    // Sidebar-Slot: pro Tool-Name nur EIN Eintrag.  Wenn 'read_file' schon
+    // existiert, updaten + Count hochzählen statt zu stacken.
+    const toolName = extractToolName(item);
+    let sideRecord = sideToolByName.get(toolName);
+    if (sideRecord) {
+      sideRecord.count += 1;
+      const dot = sideRecord.el.querySelector('.dot');
+      dot.className = 'dot in_progress';
+      sideRecord.el.querySelector('.summary').textContent = (summary || '').slice(0, 80);
+      sideRecord.el.querySelector('.count').textContent = '×' + sideRecord.count;
+      // an Top der Liste verschieben
+      $('tasks-list').prepend(sideRecord.el);
+    } else {
+      const side = document.createElement('div');
+      side.className = 'task';
+      side.dataset.toolName = toolName;
+      side.innerHTML = `
+        <div class="row">
+          <span class="dot in_progress"></span>
+          <span class="name">${escapeHtml(toolName)}</span>
+          <span class="count">×1</span>
+        </div>
+        <div class="summary">${escapeHtml(summary).slice(0, 80)}</div>`;
+      $('tasks-list').prepend(side);
+      sideRecord = { el: side, count: 1 };
+      sideToolByName.set(toolName, sideRecord);
+    }
+
+    return { mainEl: block, sideEl: sideRecord.el };
+  }
+  function completeToolBlock(itemId, item) {
+    const refs = toolEls.get(itemId);
+    if (!refs) return;
+    const { mainEl, sideEl } = refs;
+    const status = item.status || 'completed';
+    mainEl.querySelector('.status').textContent = status;
+    mainEl.querySelector('.status').className = 'status ' + status;
+    const out = item.detail || item.summary || '';
+    if (out) {
+      const pre = document.createElement('pre');
+      pre.textContent = out;
+      mainEl.querySelector('.output-slot').appendChild(pre);
+    }
+    const summary = item.summary || '';
+    if (summary) mainEl.querySelector('.head .summary').textContent = summary.slice(0, 200);
+
+    sideEl.querySelector('.dot').className = 'dot ' + status;
+    sideEl.querySelector('.summary').textContent = (summary || out).slice(0, 80);
+
+    // Plan-Tool? → in linke Sidebar-Box als prominente Step-Liste rendern
+    const toolName = extractToolName({...item, metadata: item.metadata, summary: item.summary});
+    tryIngestPlanFromToolOutput(toolName, item);
+  }
+  function extractToolName(item) {
+    return item?.metadata?.tool_name
+      || item?.metadata?.name
+      || item?.summary?.split(/[\s(]/)[0]
+      || 'tool';
+  }
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  }
+
+  // ─── Plan-Renderer ───────────────────────────────────────────────────────
+  // Wird aufgerufen wenn ein Tool-Call namens "update_plan" oder "plan"
+  // completed wird. Parst den Output (Format: "Plan updated: X pending, …\n{JSON}")
+  // und rendert die Steps in die linke Sidebar-Box.
+  function tryIngestPlanFromToolOutput(toolName, item) {
+    if (!toolName || (toolName !== 'update_plan' && toolName !== 'plan')) return;
+    const text = item.detail || item.summary || '';
+    // erstes "{...}"-JSON-Block extrahieren
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return;
+    let data;
+    try { data = JSON.parse(m[0]); } catch (e) { return; }
+    renderPlan(data);
+  }
+  function renderPlan(plan) {
+    const box = $('plan-box');
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    if (steps.length === 0) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    const done = steps.filter(s => s.status === 'completed').length;
+    const inprog = steps.filter(s => s.status === 'in_progress').length;
+    const total = steps.length;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const explanation = plan.explanation ? `<div class="expl">${escapeHtml(plan.explanation)}</div>` : '';
+    const rows = steps.map(s => {
+      const status = s.status || 'pending';
+      const sym = status === 'completed' ? '[✓]'
+                : status === 'in_progress' ? '[→]'
+                : '[ ]';
+      const label = escapeHtml(s.text || s.step || '');
+      return `<div class="plan-step ${status}"><span class="box">${sym}</span><span class="label">${label}</span></div>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="plan-head">
+        <span>${done}/${total} fertig${inprog ? ` · ${inprog} läuft` : ''}</span>
+        <span class="progress">${pct}%</span>
+      </div>
+      ${rows}
+      ${explanation}`;
+  }
+
+  // ─── Checklist-Extraktor ─────────────────────────────────────────────────
+  // Sucht in Agent-Messages Markdown-Checkboxen:
+  //   - [ ] todo text
+  //   - [x] done text
+  //   * [ ] todo text   (auch * statt -)
+  // Spätere Mentions UPDATEN bestehende Einträge (z.B. " - [x] foo " überschreibt
+  // " - [ ] foo "). Reihenfolge bleibt = Reihenfolge des ersten Auftritts.
+  const CHECKLIST_RE = /^[ \t]*[-*][ \t]+\[([ xX])\][ \t]+(.+?)[ \t]*$/gm;
+  function ingestChecklistFromText(text) {
+    if (!text) return;
+    let changed = false;
+    let m;
+    CHECKLIST_RE.lastIndex = 0;
+    while ((m = CHECKLIST_RE.exec(text)) !== null) {
+      const checked = m[1] !== ' ';
+      const label = m[2].trim();
+      if (!label) continue;
+      // Normalize key: leading/trailing whitespace, multi-space
+      const key = label.replace(/\s+/g, ' ');
+      const prev = checklist.get(key);
+      if (prev !== checked) {
+        checklist.set(key, checked);
+        changed = true;
+      }
+    }
+    if (changed) renderChecklist();
+  }
+  function renderChecklist() {
+    const box = $('checklist-box');
+    if (checklist.size === 0) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'block';
+    const items = Array.from(checklist.entries()).map(([label, done]) => {
+      const cls = done ? 'cl-item done' : 'cl-item todo';
+      const ch  = done ? '[✓]' : '[ ]';
+      return `<div class="${cls}"><span class="box">${ch}</span><span class="label">${escapeHtml(label)}</span></div>`;
+    });
+    box.innerHTML = items.join('');
+  }
+
+  // Klein, gedimmt, italic unter jedem Turn — Health-Sicht aufs Backend.
+  // Zeit + Token-Verbrauch, plus farbliche Schwelle bei lahmen Turns.
+  function appendTurnFooter(turn, u) {
+    const ms = turn.duration_ms || 0;
+    const sec = (ms / 1000);
+    let cls = '';
+    if (sec >= 30) cls = 'very-slow';
+    else if (sec >= 10) cls = 'slow';
+    const fmtSec = sec >= 10 ? sec.toFixed(1) : sec.toFixed(2);
+
+    const inp  = u.input_tokens          ?? 0;
+    const out  = u.output_tokens         ?? 0;
+    const rea  = u.reasoning_tokens      ?? 0;
+    const hit  = u.prompt_cache_hit_tokens ?? 0;
+
+    const parts = [];
+    parts.push(`<span class="${cls}">↳ ${fmtSec} s</span>`);
+    if (inp || out) {
+      parts.push(`<span class="sep">·</span>in ${inp.toLocaleString('de-DE')} → out ${out.toLocaleString('de-DE')} tok`);
+    }
+    if (rea) parts.push(`<span class="sep">·</span>reasoning ${rea.toLocaleString('de-DE')}`);
+    if (hit) parts.push(`<span class="sep">·</span>cache-hit ${hit.toLocaleString('de-DE')}`);
+
+    const el = document.createElement('div');
+    el.className = 'turn-footer';
+    el.innerHTML = parts.join('');
+    chat.appendChild(el);
+    maybeStickScroll();
+  }
+
+  // ─── SSE Stream ───────────────────────────────────────────────────────────
+  function openStream(sinceSeq) {
+    if (eventSource) eventSource.close();
+    const url = `${API}/v1/threads/${threadId}/events?since_seq=${sinceSeq ?? 0}`;
+    eventSource = new EventSource(url);
+
+    eventSource.onmessage = (msg) => {
+      noteEvent();
+      try {
+        const ev = JSON.parse(msg.data);
+        handleEvent(ev);
+      } catch (e) { console.error('SSE parse error', e, msg.data); }
+    };
+    // Named events too — runtime emits with event: ... lines.
+    ['thread.started','thread.updated','turn.started','turn.completed','turn.failed',
+     'turn.lifecycle','item.started','item.delta','item.completed','item.failed']
+      .forEach(name => eventSource.addEventListener(name, (msg) => {
+        noteEvent();
+        try { handleEvent(JSON.parse(msg.data)); } catch (e) {}
+      }));
+    eventSource.onerror = (e) => {
+      // EventSource versucht selbst zu reconnecten. Falls's stuck wirkt,
+      // greift unser Stall-Watchdog (45s) und bietet "Stop+Reset" an.
+      console.warn('SSE error', e);
+    };
+  }
+
+  function handleEvent(ev) {
+    const name = ev.event || '';
+    const p = ev.payload || {};
+
+    // Replay-Whitelist: ältere Turns durchlassen ohne DOM-Render.
+    // Compact-Items/agent_messages/etc. die zu einem nicht-whitelisted Turn
+    // gehören, werden komplett übersprungen.
+    if (!shouldRenderEvent(ev)) return;
+
+    if (name === 'item.started') {
+      const item = p.item || {};
+      // Erster echter Output vom Strix-Server → Placeholder wegnehmen.
+      // (Skipped für user_message, weil das nur der Echo der eigenen Eingabe ist.)
+      if (item.kind && item.kind !== 'user_message') {
+        hideThinkingPlaceholder();
+      }
+      if (item.kind === 'context_compaction') {
+        // Kompress-Animation stoppen
+        if (window._compressAnim) { clearInterval(window._compressAnim); window._compressAnim = null; }
+        const cm = document.getElementById('compress-marker');
+        if (cm) cm.textContent = '↳ Kontext komprimiert — Zusammenfassung folgt…';
+        currentCompactEl = startCompactBox(item);
+        // Auch bei Replay (nach Page-Reload) das Flag setzen, damit die
+        // nachfolgende agent_message dieses Turns in die Compact-Box
+        // statt in einen normalen Strix-Bubble rendert.
+        expectingCompactSummary = true;
+      } else if (item.kind === 'agent_message') {
+        // Wenn wir gerade auf das Compact-Summary warten, dann ist die
+        // agent_message dieses Turns das Summary → in Compact-Box statt
+        // als normales Strix-Bubble rendern.
+        if (expectingCompactSummary) {
+          currentCompactEl = currentCompactEl || startCompactBox({id: item.id});
+          currentMsgId = item.id;
+          currentMsgEl = null;        // agent_message wird in Compact-Body geschrieben
+        } else {
+          currentMsgId = item.id;
+          currentMsgEl = startAgentMsg(item.id);
+        }
+      } else if (item.kind === 'agent_reasoning') {
+        currentReasoningId = item.id;
+        currentReasoningEl = startReasoning(item.id);
+      } else if (item.kind === 'tool_call') {
+        toolEls.set(item.id, startToolBlock(item));
+      } else if (item.kind === 'user_message') {
+        // Eager-rendered + Replay vereinheitlicht:
+        //  - Wenn dieselbe item.id schon im DOM ist → no-op
+        //  - Wenn eine "pending" (eager) Msg da ist → stempeln
+        //  - Sonst (Replay nach Page-Reload, fremde Session) → neu rendern
+        const existing = chat.querySelector(
+          `.msg.user[data-item-id="${item.id}"]`
+        );
+        if (existing) return;
+        const pending = chat.querySelector('.msg.user[data-pending="1"]');
+        if (pending) {
+          pending.dataset.itemId = item.id;
+          delete pending.dataset.pending;
+        } else {
+          appendUserMsg(item.detail || item.summary || '', item.id);
+        }
+      }
+    }
+    else if (name === 'item.delta') {
+      const delta = p.delta || '';
+      const kind = p.kind || '';
+      if (!delta) return;
+      if (kind === 'agent_message') {
+        // Compact-Summary in eigene Box, sonst normales Strix-Bubble
+        if (expectingCompactSummary && currentCompactEl) {
+          const b = currentCompactEl.querySelector('.body');
+          b.textContent += delta;
+          if (currentCompactEl.classList.contains('open')
+              && b.scrollHeight - b.scrollTop - b.clientHeight < 30) {
+            b.scrollTop = b.scrollHeight;
+          }
+          maybeStickScroll();
+        } else if (currentMsgEl) {
+          const c = currentMsgEl.querySelector('.content');
+          c.textContent += delta;
+          maybeStickScroll();
+        }
+      } else if (kind === 'context_compaction' && currentCompactEl) {
+        const b = currentCompactEl.querySelector('.body');
+        b.textContent += delta;
+        if (currentCompactEl.classList.contains('open')
+            && b.scrollHeight - b.scrollTop - b.clientHeight < 30) {
+          b.scrollTop = b.scrollHeight;
+        }
+        maybeStickScroll();
+      } else if (kind === 'agent_reasoning' && currentReasoningEl) {
+        const b = currentReasoningEl.querySelector('.body');
+        b.textContent += delta;
+        // Auto-scroll wenn aufgeklappt + am Ende
+        if (currentReasoningEl.classList.contains('open')
+            && b.scrollHeight - b.scrollTop - b.clientHeight < 30) {
+          b.scrollTop = b.scrollHeight;
+        }
+        refreshReasoningPreview(currentReasoningEl);
+      }
+    }
+    else if (name === 'item.completed') {
+      const item = p.item || {};
+      if (item.kind === 'tool_call') {
+        completeToolBlock(item.id, item);
+      } else if (item.kind === 'context_compaction') {
+        // Nur finalize (Status/Badge) — currentCompactEl bleibt aktiv, damit
+        // die agent_message dieses Turns danach noch in die Box rendern kann.
+        // Das eigentliche "alles oberhalb wegputzen" + currentCompactEl=null
+        // passiert in turn.completed.
+        finalizeCompactBox(currentCompactEl, item);
+      } else if (item.kind === 'agent_message' && expectingCompactSummary && currentCompactEl) {
+        // Compact-Summary fertig — finalisieren, currentCompactEl behalten falls
+        // context_compaction-item-completed noch nachkommt.
+        finalizeCompactBox(currentCompactEl, item);
+        currentMsgEl = null; currentMsgId = null;
+        ingestChecklistFromText(item.detail || '');
+      } else if (item.kind === 'agent_message' && currentMsgEl) {
+        currentMsgEl.classList.remove('streaming');
+        // Checklist aus finalem Text extrahieren
+        const fullText = item.detail || currentMsgEl.querySelector('.content').textContent || '';
+        ingestChecklistFromText(fullText);
+        currentMsgEl = null; currentMsgId = null;
+      } else if (item.kind === 'agent_reasoning' && currentReasoningEl) {
+        // streaming-Klasse weg → Pulse + "denkt …"-Suffix verschwinden
+        currentReasoningEl.classList.remove('streaming');
+        refreshReasoningPreview(currentReasoningEl);
+        currentReasoningEl = null; currentReasoningId = null;
+      }
+      // Solange der Turn nicht zu Ende ist (sending=true), zeigt die
+      // Denk-Animation wieder dass strix "weitermacht" — zwischen Tool-
+      // Calls, nach Reasoning, oder zwischen mehreren agent_messages.
+      // Wird vom nächsten item.started (oder turn.completed) wieder
+      // weggenommen.
+      if (sending) showThinkingPlaceholder();
+    }
+    else if (name === 'item.failed') {
+      const item = p.item || {};
+      if (item.kind === 'tool_call') completeToolBlock(item.id, {...item, status: 'failed'});
+      if (sending) showThinkingPlaceholder();
+    }
+    else if (name === 'turn.completed') {
+      const turn = p.turn || {};
+      const u = turn.usage || {};
+      usage.input     += u.input_tokens          || 0;
+      usage.output    += u.output_tokens         || 0;
+      usage.reasoning += u.reasoning_tokens      || 0;
+      usage.cacheHit  += u.prompt_cache_hit_tokens || 0;
+      usage.turns     += 1;
+      // lastInputTokens nur aus Whitelist-Turns übernehmen, damit die
+      // Context-Bar im Replay nicht durch historische Werte flackert.
+      if (!replayWhitelistTurns || replayWhitelistTurns.has(turn.id)) {
+        lastInputTokens = u.input_tokens || lastInputTokens;
+      }
+      renderUsage();
+      updateCtxBar();
+
+      // Wenn dieser Turn ein Compaction-Turn war: alles im Chat oberhalb
+      // der Compact-Box wegräumen (sonst hat der Browser bei langem
+      // Verlauf nach jedem Reload die volle History im DOM → frisst CPU).
+      if (currentCompactEl && currentCompactEl.parentNode === chat) {
+        let n = currentCompactEl.previousSibling;
+        while (n) {
+          const prev = n.previousSibling;
+          n.remove();
+          n = prev;
+        }
+        $('tasks-list').innerHTML = '';
+        toolEls.clear();
+        sideToolByName.clear();
+        currentCompactEl = null;
+      } else {
+        appendTurnFooter(turn, u);
+      }
+
+      currentTurnId = null;
+      expectingCompactSummary = false;
+      setBusy(false);
+      clearStallWatchdog();
+      hideStallBanner();
+    }
+    else if (name === 'turn.failed') {
+      const banner = document.createElement('div');
+      banner.className = 'banner-err';
+      banner.textContent = 'Turn failed: ' + JSON.stringify(p).slice(0, 400);
+      chat.appendChild(banner);
+      maybeStickScroll();
+      currentTurnId = null;
+      expectingCompactSummary = false;
+      setBusy(false);
+      clearStallWatchdog();
+      hideStallBanner();
+    }
+  }
+
+  // ─── Submit prompt ───────────────────────────────────────────────────────
+  async function submit() {
+    const text = $('prompt').value.trim();
+    if (!text) return;
+
+    // ── Context-Overflow-Check ──────────────────────────────────────────
+    const ctxLimit = getModelCtx(resolveModel());
+    if (lastInputTokens > 0 && ctxLimit > 0 && lastInputTokens > ctxLimit * 0.85) {
+      const pct = Math.round(lastInputTokens / ctxLimit * 100);
+      const b = document.createElement('div');
+      b.className = 'banner-err';
+      b.style.background = 'rgba(255,165,0,0.12)';
+      b.style.color = '#ffa94d';
+      b.style.borderLeftColor = '#ffa94d';
+      b.innerHTML = `⚠ Kontext zu ${pct}% voll (${lastInputTokens.toLocaleString()} / ${ctxLimit.toLocaleString()} Token).<br>` +
+        `<span style="font-size:10px;opacity:0.7">Empfehlung: erst <b>⇲ Kompress</b> klicken, sonst droht Context Overflow → leere Antwort.</span>`;
+      chat.appendChild(b);
+      maybeStickScroll();
+      // nicht blockieren — User kann trotzdem senden
+    }
+
+    if (!threadId) {
+      try { await createThread(); openStream(0); }
+      catch (e) {
+        const b = document.createElement('div');
+        b.className = 'banner-err'; b.textContent = 'Thread-Create fehlgeschlagen: ' + e.message;
+        chat.appendChild(b);
+        return;
+      }
+    }
+    // Remove empty-state on first message
+    const empty = chat.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    appendUserMsg(text);
+    showThinkingPlaceholder();
+    $('prompt').value = '';
+    autoresize();
+
+    setBusy(true);
+    startStallWatchdog();
+    // Wenn der User direkt nach unten scrollt sobald er sendet — Stick wieder aktiv.
+    stickToBottom = true;
+    chat.scrollTop = chat.scrollHeight;
+
+    try {
+      const r = await fetch(`${API}/v1/threads/${threadId}/turns`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ prompt: text, model: resolveModel(), subagent_model: subagentModel }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      // Turn-ID merken für späteren Stop/Interrupt + Whitelist-Live
+      const j = await r.json();
+      currentTurnId = (j.turn && j.turn.id) || null;
+      whitelistTurn(currentTurnId);
+    } catch (e) {
+      hideThinkingPlaceholder();
+      const b = document.createElement('div');
+      b.className = 'banner-err'; b.textContent = 'Turn-Send fehlgeschlagen: ' + e.message;
+      chat.appendChild(b);
+      maybeStickScroll();
+      setBusy(false);
+      clearStallWatchdog();
+    }
+  }
+
+  // ─── UI events ───────────────────────────────────────────────────────────
+  // Send/Stop ist ein Toggle: wenn ein Turn läuft, ist der Klick = Interrupt.
+  $('send').addEventListener('click', () => {
+    if (sending) stopCurrentTurn();
+    else         submit();
+  });
+  $('compress-btn').addEventListener('click', () => { compressContext(); });
+  $('model-select').addEventListener('change', () => {
+    const v = $('model-select').value;
+    subagentModel = PRESET_MAP[v]?.sub || subagentModel;
+    try { localStorage.setItem('strix-preset', v); } catch(e) {}
+    updateCtxBar();
+  });
+  $('new-session').addEventListener('click', async () => {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    threadId = null;
+    $('thread-id').textContent = 'kein Thread';
+    $('thread-id').classList.remove('live');
+    clearChat();
+    chat.innerHTML = '<div class="empty-state"><p>Neue Session bereit. Tippe einen Prompt.</p></div>';
+  });
+  $('purge-thread-btn').addEventListener('click', async () => {
+    if (!threadId) {
+      alert('Kein Thread geladen.');
+      return;
+    }
+    const tid = threadId;
+    if (!confirm(`Thread ${tid} KOMPLETT aus der DB löschen?\n\nAlle Turns, Items und Events werden unwiederbringlich gelöscht.\nDer Workspace-Pfad (verlauf.md, Dateien) bleibt unangetastet.\n\nFortfahren?`)) {
+      return;
+    }
+    try {
+      const r = await fetch(`${API}/v1/threads/${tid}`, { method: 'DELETE' });
+      if (r.status === 204 || r.ok) {
+        if (eventSource) { eventSource.close(); eventSource = null; }
+        threadId = null;
+        $('thread-id').textContent = 'kein Thread';
+        $('thread-id').classList.remove('live');
+        clearChat();
+        chat.innerHTML = `<div class="empty-state"><p>Thread ${tid} gelöscht. Tippe einen Prompt für eine neue Session.</p></div>`;
+      } else {
+        alert(`Löschen fehlgeschlagen: HTTP ${r.status}`);
+      }
+    } catch (e) {
+      alert(`Löschen fehlgeschlagen: ${e.message}`);
+    }
+  });
+  $('prompt').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      // Während ein Turn läuft: Enter ignorieren (sonst stoppt der User
+      // versehentlich seinen Run wenn er nur den nächsten Prompt tippt).
+      // Stop nur über den expliziten Button-Klick.
+      if (!sending) submit();
+    }
+    // Escape = Stop (Convention von Codex/Claude-CLI/Cursor)
+    if (e.key === 'Escape' && sending) {
+      e.preventDefault();
+      stopCurrentTurn();
+    }
+  });
+  function autoresize() {
+    const t = $('prompt');
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight, 200) + 'px';
+  }
+  $('prompt').addEventListener('input', autoresize);
+
+  // ─── Go ──────────────────────────────────────────────────────────────────
+  bootstrap().then(() => autoResumeLatestThread());
+</script>
+</body>
+</html>

@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-agent"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "deepseek-config",
  "serde",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-app-server"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-config"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "deepseek-secrets",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-core"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-execpolicy"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "deepseek-protocol",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-hooks"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-mcp"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-protocol"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-secrets"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "dirs",
  "keyring",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-state"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-tools"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-tui-cli"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-tui-core"
-version = "1.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "deltae"
@@ -4385,7 +4385,7 @@ dependencies = [
 
 [[package]]
 name = "strix"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4415,6 +4415,7 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "rusqlite",
  "rustyline 15.0.0",
  "schemars",
  "schemaui",

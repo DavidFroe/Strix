@@ -1,0 +1,532 @@
+# gsi/engine.py
+from __future__ import annotations
+import os, sys, json, logging
+from typing import Any, Dict, List, Optional
+
+from .projects import (
+    load_projects, create_project, set_url, set_desc,
+    delete_project, rename_project
+)
+from .sheets import (
+    load_credentials, build_service, extract_spreadsheet_id,
+    get_sheet_id, get_sheet_meta, get_header_row, build_column_mapping,
+    ensure_headers, add_sheet, summarize_tabs
+)
+from .normalizer import coerce_incoming_payload
+from .validators import prevalidate_actions
+from .actions import (
+  perform_append, perform_edit_or_comment, perform_delete,
+  action_create_tab, action_delete_tab, action_rename_tab, action_set_headers,
+  action_find_rows, action_edit_where, action_delete_where
+)
+from .status import build_guidance, construct_status
+
+LOG = logging.getLogger("gpt_sheet")
+
+def _write_json(path: str, data: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as out:
+        json.dump(data, out, indent=2, ensure_ascii=False)
+
+def _service_account_email() -> Optional[str]:
+    try:
+        creds = load_credentials()
+        if creds and hasattr(creds, "service_account_email"):
+            return getattr(creds, "service_account_email")
+    except Exception:
+        pass
+    return None
+
+def _decide_guidance_policy(
+    results: List[Dict[str, Any]],
+    diagnostics: List[Dict[str, Any]],
+    request_guidance: bool,
+    is_new_project: bool
+) -> Dict[str, bool]:
+    """
+    Legt fest, ob Guidance eingebettet wird oder nur als Hinweis verfügbar ist.
+    - Fall 1 (alles OK): include_guidance = request_guidance
+    - Fall 2 (Laufzeitfehler, aber kein Strukturfehler): guidance_available_hint = True (wenn nicht explicit requested)
+    - Fall 3 (Struktur-/Verständnisfehler): include_guidance = True
+    - Fall 4 (Neues Projekt): include_guidance = True
+    """
+    def has_error(diags: List[Dict[str, Any]]) -> bool:
+        return any(d.get("level") == "error" for d in (diags or []))
+    def is_structural(diags: List[Dict[str, Any]]) -> bool:
+        structural = {
+            "invalid_json", "project_missing", "project_unknown",
+            "missing_worksheet", "no_headers", "invalid_sheet_url",
+            "unknown_action", "missing_update_json"
+        }
+        return any(d.get("code") in structural for d in (diags or []))
+
+    if is_new_project:
+        return {"include_guidance": True, "guidance_available_hint": False}
+
+    if is_structural(diagnostics):
+        return {"include_guidance": True, "guidance_available_hint": False}
+
+    # processing state
+    total = len(results)
+    failed = sum(1 for r in results if r.get("status") == "failed")
+    any_error = has_error(diagnostics)
+
+    # Fall 1: alles OK
+    if (not any_error) and (failed == 0):
+        return {"include_guidance": bool(request_guidance), "guidance_available_hint": not request_guidance}
+
+    # Fall 2: Verarbeitungsfehler (kein Strukturfehler)
+    # → Guidance nur auf Wunsch
+    return {"include_guidance": bool(request_guidance), "guidance_available_hint": not request_guidance}
+
+def run(args) -> None:
+    update_file = os.path.join(os.getcwd(), "update.json")
+    status_file = os.path.join(os.getcwd(), "status.json")
+
+    # -------- Admin-Operationen --------
+    if args.list_projects:
+        projects = load_projects()
+        print(json.dumps(projects, indent=2, ensure_ascii=False))
+        _write_json(status_file, {
+            "server_notes": "Projektliste ausgegeben.",
+            "projects": projects,
+            "version": "1.8"
+        })
+        return
+
+    if args.show:
+        db = load_projects()
+        if args.show not in db:
+            print(f"Projekt nicht gefunden: {args.show}")
+            _write_json(status_file, {
+                "server_notes": "Projekt nicht gefunden.",
+                "diagnostics": [{"level":"error","code":"project_unknown","message":f"Projekt '{args.show}' existiert nicht."}],
+                "version": "1.8"
+            })
+            sys.exit(1)
+        print(json.dumps({args.show: db[args.show]}, indent=2, ensure_ascii=False))
+        _write_json(status_file, {
+            "server_notes": "Projekt angezeigt.",
+            "project": args.show,
+            "project_data": db[args.show],
+            "version": "1.8"
+        })
+        return
+
+    if args.set_url:
+        if not args.url:
+            print("Bitte --url angeben.")
+            sys.exit(1)
+        set_url(args.set_url, args.url)
+        _write_json(status_file, {
+            "server_notes": "Projekt-URL gesetzt.",
+            "project": args.set_url,
+            "sheet_url": args.url,
+            "version": "1.8"
+        })
+        return
+
+    if args.set_desc:
+        if args.desc is None:
+            print("Bitte --desc angeben.")
+            sys.exit(1)
+        set_desc(args.set_desc, args.desc)
+        _write_json(status_file, {
+            "server_notes": "Projektbeschreibung gesetzt.",
+            "project": args.set_desc,
+            "description": args.desc,
+            "version": "1.8"
+        })
+        return
+
+    if args.delete:
+        delete_project(args.delete)
+        _write_json(status_file, {
+            "server_notes": "Projekt gelöscht.",
+            "project": args.delete,
+            "version": "1.8"
+        })
+        return
+
+    if args.rename:
+        if not args.to:
+            print("Bitte --to <NeuerName> angeben.")
+            sys.exit(1)
+        rename_project(args.rename, args.to)
+        _write_json(status_file, {
+            "server_notes": "Projekt umbenannt.",
+            "from": args.rename, "to": args.to,
+            "version": "1.8"
+        })
+        return
+
+    if args.new:
+        # Projekt anlegen + ausführlichen Primer
+        try:
+            create_project(args.new, url=args.url or "", desc=args.desc or "")
+            new_created = True
+        except ValueError:
+            # Bestehendes Projekt nicht als Fehler behandeln
+            print(f"Projekt '{args.new}' existiert bereits – benutze bestehendes Projekt.")
+            new_created = False
+
+        sa_mail = _service_account_email()
+        sheet_url = args.url or ""
+        tabs = []
+        title = None
+        try:
+            if sheet_url:
+                creds = load_credentials()
+                service = build_service(creds) if creds else None
+                if service:
+                    sid = extract_spreadsheet_id(sheet_url)
+                    if sid:
+                        meta = get_sheet_meta(service, sid)
+                        title = (meta.get("properties") or {}).get("title")
+                        tabs = summarize_tabs(service, sid)
+        except Exception:
+            pass
+
+        flags_default = {
+            "allow_auto_tab_create": False,
+            "allow_auto_headers": True,
+            "include_snapshots": True,
+            "autocreate_project": False
+        }
+        guidance = build_guidance(args.new, sheet_url, None, None, [], [], tabs, flags_default, sa_mail)
+        status = construct_status(
+            project=args.new,
+            update_id=None,
+            sheet_url=sheet_url,
+            results=[], diagnostics=[],
+            guidance=guidance,
+            tabs=tabs, sheet_events=[], spreadsheet_title=title,
+            context={"project_cli": args.new, "project_update": None, "project_effective": args.new, "project_source": "cli"},
+            include_guidance=True
+        )
+        _write_json(status_file, status)
+        if new_created:
+            print(f"Projekt angelegt: {args.new}")
+        return
+
+    # -------- Normaler Run --------
+    db = load_projects()
+    diagnostics: List[Dict[str, Any]] = []
+    sheet_events: List[Dict[str, Any]] = []
+    update_data: Optional[Dict[str, Any]] = None
+
+    try:
+        with open(update_file, "r", encoding="utf-8") as f:
+            update_data = json.load(f)
+    except FileNotFoundError:
+        diagnostics.append({"level":"error","code":"missing_update_json","message":"update.json nicht gefunden."})
+    except json.JSONDecodeError as exc:
+        diagnostics.append({"level":"error","code":"invalid_json","message":f"update.json ungültig: {exc}"})
+
+    request_guidance = bool((update_data or {}).get("request_guidance", False))
+
+    # Projekt ermitteln
+    selected_project: Optional[str] = None
+    source = None
+    if args.project:
+        selected_project = args.project; source = "cli"
+    elif update_data and isinstance(update_data.get("project"), str):
+        selected_project = update_data.get("project"); source = "update_json"
+        diagnostics.append({"level":"info","code":"project_from_update","message":f"Projekt aus update.json: '{selected_project}'."})
+    else:
+        diagnostics.append({"level":"error","code":"project_missing","message":"Kein Projekt angegeben (weder CLI --project noch update.json.project)."})
+
+    autocreate_project = bool(update_data.get("autocreate_project", False)) if isinstance(update_data, dict) else False
+    if selected_project and selected_project not in db:
+        if autocreate_project and update_data:
+            url_from_update = (update_data.get("sheet") or {}).get("url") or ""
+            desc_from_update = update_data.get("notes") or ""
+            create_project(selected_project, url=url_from_update, desc=desc_from_update)
+            db = load_projects()
+            diagnostics.append({"level":"warning","code":"project_autocreated","message":f"Projekt '{selected_project}' aus update.json angelegt."})
+        else:
+            diagnostics.append({"level":"error","code":"project_unknown","message":f"Projekt '{selected_project}' existiert nicht. Nutze --new oder setze 'autocreate_project': true in update.json."})
+
+    context: Dict[str, Any] = {
+        "project_cli": args.project if args.project else None,
+        "project_update": (update_data or {}).get("project") if update_data else None,
+        "project_effective": selected_project,
+        "project_source": source,
+        "flags": {
+            "autocreate_project": autocreate_project
+        }
+    }
+
+    # harte Fehler → nur Status schreiben (Guidance-Regel unten)
+    if any(d["level"] == "error" and d["code"] in {"project_missing","project_unknown","missing_update_json","invalid_json"} for d in diagnostics):
+        sa_mail = _service_account_email()
+        guidance = build_guidance(selected_project, None, None, None, diagnostics, sheet_events, [], {}, sa_mail)
+        policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+        status = construct_status(selected_project,
+                                  (update_data or {}).get("update_id") if isinstance(update_data, dict) else None,
+                                  None, [], diagnostics, guidance, [], sheet_events, None, context,
+                                  include_guidance=policy["include_guidance"],
+                                  guidance_available_hint=policy["guidance_available_hint"])
+        _write_json(status_file, status)
+        if any(d["code"] == "project_missing" for d in diagnostics):
+            print("Bitte Projekt angeben: --project <Name> ODER 'project' in update.json setzen.")
+        return
+
+    # URL priorisieren
+    project_url = db[selected_project].get("url") if selected_project else ""
+    req_url = ((update_data or {}).get("sheet") or {}).get("url") if update_data else ""
+    if args.force_project:
+        sheet_url_final = project_url
+        if req_url and req_url != project_url:
+            diagnostics.append({"level":"warning","code":"force_project_url","message":"update.json URL ignoriert; Projekt-URL erzwungen."})
+    else:
+        sheet_url_final = req_url or project_url
+        if req_url and project_url and req_url != project_url:
+            diagnostics.append({"level":"warning","code":"url_conflict","message":"update.json URL ≠ Projekt-URL; benutze update.json URL."})
+
+    worksheet_name = ((update_data or {}).get("sheet") or {}).get("worksheet") if update_data else None
+
+    # Help → vollständige Guidance, unabhängig vom Rest
+    if update_data and update_data.get("help", False) is True:
+        sa_mail = _service_account_email()
+        tabs = []
+        spreadsheet_title = None
+        if sheet_url_final:
+            creds = load_credentials()
+            try:
+                service = build_service(creds) if creds else None
+                if service:
+                    sid = extract_spreadsheet_id(sheet_url_final)
+                    if sid:
+                        meta = get_sheet_meta(service, sid)
+                        spreadsheet_title = (meta.get("properties") or {}).get("title")
+                        tabs = summarize_tabs(service, sid)
+            except Exception:
+                pass
+        flags = {
+            "allow_auto_tab_create": bool((update_data or {}).get("allow_auto_tab_create", False)),
+            "allow_auto_headers": bool((update_data or {}).get("allow_auto_headers", True)),
+            "include_snapshots": bool((update_data or {}).get("include_snapshots", True)),
+            "autocreate_project": autocreate_project,
+        }
+        guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events, tabs, flags, sa_mail)
+        status = construct_status(selected_project, update_data.get("update_id"), sheet_url_final, [],
+                                  diagnostics, guidance, tabs, sheet_events, spreadsheet_title, context,
+                                  include_guidance=True)
+        _write_json(status_file, status)
+        print("Help-Mode: Guidance in status.json geschrieben.")
+        return
+
+    if not sheet_url_final:
+        diagnostics.append({"level":"error","code":"missing_url","message":"`sheet.url` fehlt (oder Projekt-URL leer)."})
+        sa_mail = _service_account_email()
+        guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+        policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+        status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                  [], diagnostics, guidance, [], sheet_events, None, context,
+                                  include_guidance=policy["include_guidance"],
+                                  guidance_available_hint=policy["guidance_available_hint"])
+        _write_json(status_file, status)
+        return
+
+    # Flags
+    allow_auto_tab_create = bool((update_data or {}).get("allow_auto_tab_create", False))
+    allow_auto_headers = bool((update_data or {}).get("allow_auto_headers", True))
+    include_snapshots = bool((update_data or {}).get("include_snapshots", True))
+    context["flags"].update({
+        "allow_auto_tab_create": allow_auto_tab_create,
+        "allow_auto_headers": allow_auto_headers,
+        "include_snapshots": include_snapshots,
+    })
+
+    # Auth + Service
+    creds = load_credentials()
+    if creds is None or build_service is None:
+        diagnostics.append({"level":"error","code":"no_credentials","message":"Keine Google-Credentials oder Libraries vorhanden."})
+        sa_mail = _service_account_email()
+        guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+        policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+        status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                  [], diagnostics, guidance, [], sheet_events, None, context,
+                                  include_guidance=policy["include_guidance"],
+                                  guidance_available_hint=policy["guidance_available_hint"])
+        _write_json(status_file, status)
+        return
+    try:
+        service = build_service(creds)
+    except Exception as exc:
+        diagnostics.append({"level":"error","code":"service_init_failed","message":f"Fehler beim Initialisieren der Sheets API: {exc}"})
+        sa_mail = _service_account_email()
+        guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+        policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+        status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                  [], diagnostics, guidance, [], sheet_events, None, context,
+                                  include_guidance=policy["include_guidance"],
+                                  guidance_available_hint=policy["guidance_available_hint"])
+        _write_json(status_file, status)
+        return
+
+    spreadsheet_id = extract_spreadsheet_id(sheet_url_final)
+    if not spreadsheet_id:
+        diagnostics.append({"level":"error","code":"invalid_sheet_url","message":"Konnte Spreadsheet ID nicht aus der URL extrahieren."})
+        sa_mail = _service_account_email()
+        guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+        policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+        status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                  [], diagnostics, guidance, [], sheet_events, None, context,
+                                  include_guidance=policy["include_guidance"],
+                                  guidance_available_hint=policy["guidance_available_hint"])
+        _write_json(status_file, status)
+        return
+
+    # Spreadsheet-Meta + Tabs
+    meta = get_sheet_meta(service, spreadsheet_id)
+    spreadsheet_title = (meta.get("properties") or {}).get("title")
+    tabs_now = summarize_tabs(service, spreadsheet_id)
+
+    # Worksheet/Header für Row-Actions
+    actions = (update_data or {}).get("actions", [])
+    needs_ws_context = any(a.get("type") in {"append","edit","delete","comment"} for a in actions)
+    headers: List[str] | None = None
+
+    if needs_ws_context:
+        if not worksheet_name:
+            diagnostics.append({"level":"error","code":"missing_worksheet","message":"`sheet.worksheet` fehlt."})
+            sa_mail = _service_account_email()
+            guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+            policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+            status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                      [], diagnostics, guidance, tabs_now, sheet_events, spreadsheet_title, context,
+                                      include_guidance=policy["include_guidance"],
+                                      guidance_available_hint=policy["guidance_available_hint"])
+            _write_json(status_file, status)
+            return
+
+        sid = get_sheet_id(service, spreadsheet_id, worksheet_name)
+        if sid is None:
+            if allow_auto_tab_create:
+                add_sheet(service, spreadsheet_id, worksheet_name)
+                sheet_events.append({"event":"worksheet_created_auto","worksheet":worksheet_name})
+            else:
+                diagnostics.append({"level":"error","code":"worksheet_missing","message":f"Worksheet '{worksheet_name}' fehlt. Verwende 'create_tab' oder setze allow_auto_tab_create=true."})
+                sa_mail = _service_account_email()
+                guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+                policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+                status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                          [], diagnostics, guidance, tabs_now, sheet_events, spreadsheet_title, context,
+                                          include_guidance=policy["include_guidance"],
+                                          guidance_available_hint=policy["guidance_available_hint"])
+                _write_json(status_file, status)
+                return
+
+        headers = get_header_row(service, spreadsheet_id, worksheet_name)
+        if not headers:
+            if allow_auto_headers:
+                schema = (update_data or {}).get("schema")
+                if not isinstance(schema, list) or not schema:
+                    first_append = next((a for a in actions if a.get("type") == "append" and isinstance(a.get("values"), dict)), None)
+                    if first_append:
+                        schema = list(first_append["values"].keys())
+                if not schema:
+                    diagnostics.append({"level":"error","code":"no_headers","message":"Header fehlen und konnten nicht abgeleitet werden. Gib 'schema' an oder eine 'append'-Action mit 'values'."})
+                    sa_mail = _service_account_email()
+                    guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, None, diagnostics, sheet_events)
+                    policy = _decide_guidance_policy([], diagnostics, request_guidance, is_new_project=False)
+                    status = construct_status(selected_project, (update_data or {}).get("update_id"), sheet_url_final,
+                                              [], diagnostics, guidance, tabs_now, sheet_events, spreadsheet_title, context,
+                                              include_guidance=policy["include_guidance"],
+                                              guidance_available_hint=policy["guidance_available_hint"])
+                    _write_json(status_file, status)
+                    return
+                ensure_headers(service, spreadsheet_id, worksheet_name, schema)
+                headers = schema
+                sheet_events.append({"event":"headers_initialized_auto","worksheet":worksheet_name,"schema":schema})
+
+    # Normalisieren + Vorvalidieren
+    update_data = coerce_incoming_payload(update_data or {}, headers if headers else None, diagnostics)
+    actions = update_data.get("actions", [])
+    pre_results, remaining = prevalidate_actions(actions, headers, worksheet_name, diagnostics)
+
+    # Ausführen
+    results: List[Dict[str, Any]] = [r.to_dict() for r in pre_results]
+    col_map = build_column_mapping(headers) if headers else {}
+    header_count = len(headers or [])
+
+    for act in remaining:
+        t = act["type"]
+        ws = act.get("worksheet", worksheet_name)
+        if t == "append":
+            res = perform_append(service, spreadsheet_id, ws, col_map, header_count, act.get("values", {}), bool(update_data.get("include_snapshots", True)))
+        elif t in ("edit","comment"):
+            res = perform_edit_or_comment(service, spreadsheet_id, ws, col_map, t, act.get("row"), act.get("values", {}), bool(update_data.get("include_snapshots", True)))
+        elif t == "delete":
+            sid = get_sheet_id(service, spreadsheet_id, ws)
+            res = perform_delete(service, spreadsheet_id, sid, ws, act.get("row"), header_count, bool(update_data.get("include_snapshots", True)))
+        elif t == "create_tab":
+            res = action_create_tab(service, spreadsheet_id, act["worksheet"], act.get("schema"), act.get("index"))
+            sheet_events.append({"event":"worksheet_created","worksheet":act["worksheet"],"schema":act.get("schema"),"index":act.get("index")})
+        elif t == "delete_tab":
+            res = action_delete_tab(service, spreadsheet_id, act["worksheet"])
+            sheet_events.append({"event":"worksheet_deleted","worksheet":act["worksheet"]})
+        elif t == "rename_tab":
+            res = action_rename_tab(service, spreadsheet_id, act["worksheet"], act["new_name"])
+            sheet_events.append({"event":"worksheet_renamed","from":act["worksheet"],"to":act["new_name"]})
+        elif t == "set_headers":
+            res = action_set_headers(service, spreadsheet_id, act["worksheet"], act["schema"])
+            sheet_events.append({"event":"headers_set","worksheet":act["worksheet"],"schema":act["schema"]})
+        elif t == "list_tabs":
+            res = None
+			
+        elif t == "find_rows":
+            res = action_find_rows(
+                service, spreadsheet_id,
+                act.get("worksheet", worksheet_name),
+                where=act.get("where", {}),
+                limit=act.get("limit"),
+                offset=int(act.get("offset", 0)),
+            )
+        elif t == "edit_where":
+            ws = act.get("worksheet", worksheet_name)
+            res = action_edit_where(
+                service, spreadsheet_id, ws, col_map,
+                values=act.get("values", {}),
+                where=act.get("where", {}),
+                header_count=header_count,
+                limit=act.get("limit"),
+                offset=int(act.get("offset", 0)),
+                include_snapshots=bool(update_data.get("include_snapshots", True)),
+            )
+        elif t == "delete_where":
+            ws = act.get("worksheet", worksheet_name)
+            res = action_delete_where(
+                service, spreadsheet_id, ws,
+                where=act.get("where", {}),
+                header_count=header_count,
+                limit=act.get("limit"),
+                offset=int(act.get("offset", 0)),
+                include_snapshots=bool(update_data.get("include_snapshots", True)),
+            )					
+        else:
+            from .actions import ActionResult as ARes
+            res = ARes(t, None, "failed", f"Unbekannter Aktionstyp '{t}'")
+        if res is not None:
+            results.append(res.to_dict())
+
+    # Status zusammenbauen (Guidance-Policy anwenden)
+    sa_mail = _service_account_email()
+    guidance = build_guidance(selected_project, sheet_url_final, worksheet_name, headers if headers else None, diagnostics, sheet_events,
+                              tabs=summarize_tabs(service, spreadsheet_id),
+                              flags=context.get("flags", {}), service_account_email=sa_mail)
+    policy = _decide_guidance_policy(results, diagnostics, request_guidance, is_new_project=False)
+    status = construct_status(
+        project=selected_project,
+        update_id=update_data.get("update_id") if isinstance(update_data, dict) else None,
+        sheet_url=sheet_url_final,
+        results=results, diagnostics=diagnostics, guidance=guidance,
+        tabs=summarize_tabs(service, spreadsheet_id),
+        sheet_events=sheet_events,
+        spreadsheet_title=(get_sheet_meta(service, spreadsheet_id).get("properties") or {}).get("title"),
+        context=context,
+        include_guidance=policy["include_guidance"],
+        guidance_available_hint=policy["guidance_available_hint"]
+    )
+    _write_json(status_file, status)

@@ -20,6 +20,41 @@ fn main() {
     // Fällt zurück auf 0, wenn git nicht verfügbar (z.B. crates.io-Build).
     let build_number = git_commit_count().unwrap_or(0);
     println!("cargo:rustc-env=STRIX_BUILD_NUMBER={build_number}");
+
+    // Build-Zeitstempel — wird in der Web-UI angezeigt damit man im Browser
+    // sieht, welche Version gerade läuft (Cache-Verifikation).
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs / 86400;
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let (yr, mo, dy) = days_to_ymd(days);
+    let stamp_s = format!("{:04}-{:02}-{:02} {:02}:{:02}", yr, mo, dy, h, m);
+    println!("cargo:rustc-env=STRIX_BUILD_STAMP={stamp_s}");
+    // Bei jedem index.html-Edit neu bauen, damit Stempel + HTML zusammen passen.
+    println!("cargo:rerun-if-changed=webui/index.html");
+}
+
+fn days_to_ymd(mut days: i64) -> (i32, u32, u32) {
+    let mut year: i32 = 1970;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let ydays: i64 = if leap { 366 } else { 365 };
+        if days < ydays { break; }
+        days -= ydays;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let mlens: [i64; 12] = [31, if leap {29} else {28}, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month: u32 = 1;
+    for &ml in &mlens {
+        if days < ml { break; }
+        days -= ml;
+        month += 1;
+    }
+    (year, month, (days + 1) as u32)
 }
 
 fn git_commit_count() -> Option<u64> {

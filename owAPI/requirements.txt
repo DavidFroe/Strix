@@ -1,0 +1,6 @@
+playwright>=1.32.0
+pydantic>=1.10.7
+typing-extensions>=4.5.0
+colorama>=0.4.6
+pyautogui>=0.9.53
+pygetwindow>=0.0.9

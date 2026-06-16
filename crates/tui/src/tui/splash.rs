@@ -112,6 +112,10 @@ pub struct SplashScreen {
     /// Keeps the splash visible briefly with an error marker so the user can see
     /// the 27B test was attempted, before auto-dismissing into the TUI.
     comment_failed_at: Option<Instant>,
+    /// Phase-1 duration: from shown_at to QuoteReady. `None` until quote arrived.
+    quote_duration: Option<Duration>,
+    /// Phase-2 duration: from QuoteReady to CommentReady. `None` until both arrived.
+    comment_duration: Option<Duration>,
 }
 
 impl SplashScreen {
@@ -124,6 +128,8 @@ impl SplashScreen {
             attempt_n: 0,
             attempt_started_at: None,
             comment_failed_at: None,
+            quote_duration: None,
+            comment_duration: None,
             inference: InferenceState::Pending,
         }
     }
@@ -167,8 +173,10 @@ impl SplashScreen {
                     elapsed >= Duration::from_secs(300)
                 }
             }
-            // Success is set by CommentReady which also sets dismissed=true — never rendered.
-            InferenceState::Success { .. } => true,
+            // Success: warte auf User-Keypress (kein Auto-Dismiss mehr).
+            // Hartes Maximum 600 s damit nicht ewig hängen bleibt falls
+            // der User schlafen geht. Normal-Exit: dismiss() bei Keypress.
+            InferenceState::Success { .. } => elapsed >= Duration::from_secs(600),
             // Failed: stay open briefly so the user can read the error.
             InferenceState::Failed(_) => elapsed >= SPLASH_DURATION,
         }
@@ -210,6 +218,10 @@ impl SplashScreen {
             }
             InferenceUpdate::QuoteReady(q, a) => {
                 self.inference = InferenceState::QuoteReady { quote: q, attribution: a };
+                // Phase-1-Dauer festhalten (für die Performance-Anzeige)
+                if self.quote_duration.is_none() {
+                    self.quote_duration = Some(self.shown_at.elapsed());
+                }
                 // Comment phase will issue its own AttemptStarted; reset counter so
                 // the timer doesn't briefly show the quote phase's elapsed time.
                 self.attempt_label = None;
@@ -218,37 +230,52 @@ impl SplashScreen {
             }
             InferenceUpdate::CommentReady { greeting, corrected_quote, corrected_attribution } => {
                 if let InferenceState::QuoteReady { quote, attribution } = &self.inference {
+                    let now = Instant::now();
+                    // Phase-2-Dauer = von QuoteReady bis CommentReady
+                    let phase2 = self.quote_duration
+                        .map(|q| self.shown_at.elapsed().saturating_sub(q))
+                        .unwrap_or_else(|| now.duration_since(self.shown_at));
+                    self.comment_duration = Some(phase2);
                     self.inference = InferenceState::Success {
                         quote:       corrected_quote.unwrap_or_else(|| quote.clone()),
                         attribution: corrected_attribution.unwrap_or_else(|| attribution.clone()),
                         greeting,
                     };
-                    self.success_at = Some(Instant::now());
-                    // Immediately dismiss — comment is never shown in the splash itself,
-                    // only in the TUI after opening.
-                    self.dismissed = true;
+                    self.success_at = Some(now);
+                    // Spinner stoppen — sonst tickt "denkt darüber nach" weiter
+                    // auch wenn der Comment längst da ist.
+                    self.attempt_label = None;
+                    self.attempt_n = 0;
+                    self.attempt_started_at = None;
+                    // NICHT mehr auto-dismiss — User soll Zeit haben, das
+                    // Zitat + den Kommentar zu lesen. dismissed wird per
+                    // Keypress gesetzt (siehe dismiss()).
                 }
             }
             InferenceUpdate::Failed(e) => {
-                // Soft-fail when a quote already arrived: keep the splash in
-                // QuoteReady state so the user still sees the 27B test was attempted,
-                // mark the attempt as failed in the timer line, and arm the 8 s
-                // dismiss timer in is_done(). The full error is on stderr / in the
-                // start log for the backend dev.
+                // Quote war schon da → soft-fail mit kurzer Reject-Message.
+                // App.rs schickt im Failed-String genau die einzeilige
+                // Kurz-Diagnose (z.B. "-- Kommentaranfrage … abgelehnt --").
                 if matches!(self.inference, InferenceState::QuoteReady { .. }) {
-                    let short = e
-                        .lines()
+                    // Spinner stoppen, Reject-Message als Label einsetzen
+                    self.attempt_n = 0;
+                    self.attempt_started_at = None;
+                    let short = e.lines()
                         .find(|l| !l.trim().is_empty() && !l.starts_with('='))
-                        .unwrap_or("Comment failed")
+                        .unwrap_or(&e)
                         .trim()
-                        .chars()
-                        .take(80)
-                        .collect::<String>();
-                    self.attempt_label = Some(format!("\u{26a0} 27B-Test failed: {short}"));
-                    // Freeze the timer at the failure moment by leaving attempt_started_at
-                    // untouched — it keeps showing the duration the test ran for.
+                        .chars().take(120).collect::<String>();
+                    self.attempt_label = Some(short);
                     self.comment_failed_at = Some(Instant::now());
+                    if self.comment_duration.is_none() {
+                        let phase2 = self.quote_duration
+                            .map(|q| self.shown_at.elapsed().saturating_sub(q))
+                            .unwrap_or_else(|| self.shown_at.elapsed());
+                        self.comment_duration = Some(phase2);
+                    }
                 } else {
+                    self.attempt_label = None;
+                    self.attempt_started_at = None;
                     self.inference = InferenceState::Failed(e);
                 }
             }
@@ -293,11 +320,19 @@ impl SplashScreen {
             .into_iter()
             .take(4)
             .collect();
+        // Greeting/Spinner gleich behandeln — bei langem Kommentar mehrzeilig
+        // und zentriert. Max 5 Zeilen damit der Splash-Block nicht explodiert.
+        let greeting_wrapped: Vec<String> = greeting_line.as_deref()
+            .map(|g| word_wrap(g, content_w as usize))
+            .unwrap_or_default()
+            .into_iter()
+            .take(5)
+            .collect();
 
         // Dynamic content height: logo + blank + propeller + blank + text block + press_key.
         let q_rows  = quote_wrapped.len().max(if quote_line.is_some() { 1 } else { 0 }) as u16;
         let a_rows  = if attrib_line.is_some()   { 1u16 } else { 0 };
-        let g_rows  = if greeting_line.is_some()  { 1u16 } else { 0 };
+        let g_rows  = greeting_wrapped.len().max(if greeting_line.is_some() { 1 } else { 0 }) as u16;
         // text block = quote + attrib + blank + greeting + blank (before press_key)
         let text_h  = q_rows + a_rows + 1 + g_rows + 1;
         let owl_h = OWL_LINES.len() as u16;
@@ -403,32 +438,62 @@ impl SplashScreen {
         row += 1;
         row += 1; // blank between attribution and greeting/spinner
 
-        // Greeting / spinner.
-        if let Some(g) = &greeting_line {
-            if row < area.bottom() {
-                let gw = g.width() as u16;
-                let gx = ox + content_w.saturating_sub(gw) / 2;
-                let color = if matches!(&self.inference, InferenceState::QuoteReady { .. }) {
-                    let pulse = (elapsed_ms % 900) as f64 / 900.0;
-                    let alpha = (pulse * std::f64::consts::TAU).sin() * 0.5 + 0.5;
-                    let bright = (100.0 + alpha * 80.0) as u8;
-                    Color::Rgb(bright / 2, bright, bright)
-                } else {
-                    Color::Rgb(100, 210, 180)
-                };
-                buf.set_string(gx, row, g, Style::default().fg(color));
+        // Greeting / spinner — mehrzeilig, jede Zeile horizontal zentriert.
+        if !greeting_wrapped.is_empty() {
+            let color = if matches!(&self.inference, InferenceState::QuoteReady { .. }) {
+                let pulse = (elapsed_ms % 900) as f64 / 900.0;
+                let alpha = (pulse * std::f64::consts::TAU).sin() * 0.5 + 0.5;
+                let bright = (100.0 + alpha * 80.0) as u8;
+                Color::Rgb(bright / 2, bright, bright)
+            } else {
+                Color::Rgb(100, 210, 180)
+            };
+            for line in &greeting_wrapped {
+                if row >= area.bottom() { break; }
+                let lw = line.width() as u16;
+                let lx = ox + content_w.saturating_sub(lw) / 2;
+                buf.set_string(lx, row, line, Style::default().fg(color));
+                row += 1;
             }
+        } else if greeting_line.is_some() {
+            row += 1; // Platzhalter wenn greeting da aber empty
         }
-        row += 1;
         row += 1; // blank before press-key hint
 
-        // ── 6. "Press any key" hint — only when waiting for comment or on failure ──
-        // Pending: propeller-only, no hint needed.
-        // QuoteReady: user can skip the comment wait.
-        // Success: auto-dismisses, no hint needed.
-        // Failed: user must press a key to continue.
+        // ── 6a. Performance-Timing (sobald Phase-1 fertig ist) ─────────────
+        // Format: "Quote 35s · Comment 78s" — pro Wert grün/gelb/rot nach
+        // Schwellen (<60s grün, 60–180s gelb, >180s rot). Zeigt dem User
+        // sofort wie gesund das Backend gerade läuft.
+        if (self.quote_duration.is_some() || self.comment_duration.is_some())
+            && row < area.bottom()
+        {
+            let line_spans = build_timing_spans(self.quote_duration, self.comment_duration);
+            let line_w: usize = line_spans.iter().map(|(t, _)| t.width()).sum::<usize>()
+                + line_spans.len().saturating_sub(1); // 1 space between segments
+            let tx = ox + content_w.saturating_sub(line_w as u16) / 2;
+            let mut cx = tx;
+            for (text, color) in &line_spans {
+                buf.set_string(cx, row, text, Style::default().fg(*color).bg(Color::Black));
+                cx += text.width() as u16;
+                // single-space separator
+                if cx < area.right() {
+                    buf.set_string(cx, row, " ", Style::default().bg(Color::Black));
+                    cx += 1;
+                }
+            }
+            row += 1;
+            row += 1; // blank before press-key hint
+        }
+
+        // ── 6b. "Press any key" hint ─────────────────────────────────────────
+        // Sichtbar wann immer der User dismisssen darf:
+        //   QuoteReady — er kann den Comment-Wait skippen
+        //   Success    — er soll Zeit haben das Zitat zu lesen
+        //   Failed     — er muss bestätigen
         let show_press_key = matches!(&self.inference,
-            InferenceState::QuoteReady { .. } | InferenceState::Failed(_));
+            InferenceState::QuoteReady { .. }
+            | InferenceState::Success { .. }
+            | InferenceState::Failed(_));
         if row < area.bottom() {
             let can_dismiss = show_press_key && self.shown_at.elapsed().as_millis() >= SPLASH_MIN_MS;
             if can_dismiss {
@@ -445,6 +510,40 @@ impl SplashScreen {
             }
         }
     }
+}
+
+/// Baue die Timing-Anzeige als (text, color)-Spans. Ampel-Schwellen:
+///   <  60s → grün
+///   60–180s → gelb
+///   > 180s → rot
+fn build_timing_spans(
+    quote: Option<Duration>,
+    comment: Option<Duration>,
+) -> Vec<(String, Color)> {
+    fn traffic(d: Duration) -> Color {
+        let s = d.as_secs();
+        if s < 60        { Color::Rgb(100, 210, 120) }   // grün
+        else if s <= 180 { Color::Rgb(230, 200, 90)  }   // gelb
+        else             { Color::Rgb(230, 100, 100) }   // rot
+    }
+    fn fmt(d: Duration) -> String {
+        let secs = d.as_secs_f32();
+        if secs < 10.0 { format!("{:.1}s", secs) } else { format!("{:.0}s", secs) }
+    }
+    let mut spans: Vec<(String, Color)> = Vec::new();
+    let label_col = Color::Rgb(140, 140, 150);
+    if let Some(q) = quote {
+        spans.push(("Quote".to_string(), label_col));
+        spans.push((fmt(q), traffic(q)));
+    }
+    if let Some(c) = comment {
+        if !spans.is_empty() {
+            spans.push(("·".to_string(), label_col));
+        }
+        spans.push(("Comment".to_string(), label_col));
+        spans.push((fmt(c), traffic(c)));
+    }
+    spans
 }
 
 // ── Word-wrap helper ─────────────────────────────────────────────────────────

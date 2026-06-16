@@ -1,0 +1,39 @@
+{
+  "protocol_version": "1.0.0",
+  "conversation": {
+    "new_chat": true,
+    "temporary_chat": false,
+    "enable_web_search": false
+  },
+  "ui": {
+    "dom_first": true,
+    "absolute": {
+      "composer_xy": [
+        1000,
+        536
+      ],
+      "plus_xy": [
+        630,
+        530
+      ],
+      "more_xy": [
+        700,
+        780
+      ],
+      "web_xy": [
+        1000,
+        780
+      ]
+    }
+  },
+  "wait": {
+    "expect_json_codeblock": true,
+    "max_wait_s": 120,
+    "settle_s": 0.6
+  },
+  "message": "Analysiere folgende status.json (Fehler enthalten) und antworte NUR mit EINEM JSON-Codeblock (Schema v1) mit decision='produce_update_json' und einer vollst\u00e4ndigen korrigierten update.json. Idempotent bleiben (keine Duplikate), Worksheet/Header korrekt setzen. Falls Informationen fehlen -> decision='retry' + kurze message.\n\nstatus.json:\n```json\n{\n  \"project\": \"Bewerbungs_Log\",\n  \"update_id\": null,\n  \"sheet_url\": \"https://docs.google.com/spreadsheets/d/1Wa8kL5kiDuw-0XYqF2iuFqkItg7dhFNydBELwtJBKlI/edit?usp=sharing\",\n  \"spreadsheet\": {\n    \"id\": \"1Wa8kL5kiDuw-0XYqF2iuFqkItg7dhFNydBELwtJBKlI\",\n    \"title\": \"Bewerbungs Logs\"\n  },\n  \"results\": [\n    {\n      \"action\": \"edit\",\n      \"status\": \"failed\",\n      \"row\": 14,\n      \"error\": \"Header not found: Stellenausschreibung_URL\"\n    }\n  ],\n  \"diagnostics\": [\n    {\n      \"level\": \"error\",\n      \"code\": \"unknown_column\",\n      \"message\": \"Header 'Stellenausschreibung_URL' nicht gefunden.\"\n    }\n  ],\n  \"sheet_events\": [],\n  \"tabs\": [\n    {\n      \"title\": \"Tabellenblatt1\",\n      \"sheetId\": 0,\n      \"index\": 0,\n      \"rows\": 1023,\n      \"cols\": 27,\n      \"headers\": [\n        \"Datum\",\n        \"Firma\",\n        \"Stelle/Referenz\",\n        \"Kanal\",\n        \"Kontaktperson\",\n        \"Kontakt (E-Mail/Tel)\",\n        \"Ort/Remote\",\n        \"Aktivit\u00e4t\",\n        \"Zusammenfassung\",\n        \"Status\",\n        \"N\u00e4chster Schritt\",\n        \"Frist/N\u00e4chster Kontakt\",\n        \"Belege/Link\",\n        \"Stellenausschreibung_URL\"\n      ]\n    }\n  ],\n  \"context\": {\n    \"project_cli\": null,\n    \"project_update\": \"Bewerbungs_Log\",\n    \"project_effective\": \"Bewerbungs_Log\",\n    \"project_source\": \"update_json\",\n    \"flags\": {\n      \"autocreate_project\": false,\n      \"allow_auto_tab_create\": false,\n      \"allow_auto_headers\": true,\n      \"include_snapshots\": true\n    }\n  },\n  \"version\": \"1.9\",\n  \"guidance_hint\": {\n    \"available\": true,\n    \"how_to_request\": \"Sende in update.json zus\u00e4tzlich \\\"request_guidance\\\": true (oder setze \\\"help\\\": true).\"\n  },\n  \"server_notes\": \"Alle Aktionen erfolgreich verarbeitet.\"\n}\n```",
+  "meta": {
+    "task_id": "repair-status-example",
+    "context": {}
+  }
+}

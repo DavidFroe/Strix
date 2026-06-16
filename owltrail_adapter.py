@@ -39,6 +39,93 @@ _logger = logging.getLogger("owltrail.adapter")
 # Wird nach dem Adapter-Start durch _build_dynamic_model_map() befüllt.
 _DYNAMIC_MODEL_MAP: dict[str, str] = {}
 
+# ───────────────────────────────────────────────────────────────────────────
+# Modell-Health-Watchdog
+# ───────────────────────────────────────────────────────────────────────────
+# Background-Thread pollt alle WATCHDOG_INTERVAL Sekunden GET /v1/models und
+# baut _MODEL_HEALTH: numerical_id → status ("OK"/"ERROR"/"STANDBY"/...) auf.
+#
+# Beim Forwarden eines Chat-Calls wird VORHER der Status gecheckt. Bei
+# !OK wird — falls in owltrail.conf["model_fallbacks"] konfiguriert —
+# transparent auf ein Ersatzmodell umgeleitet. Sonst sofortiger 503 mit
+# klarer Message statt 30s Timeout.
+
+_MODEL_HEALTH: dict[str, str] = {}      # numerical_id → status
+_HEALTH_LOCK = threading.Lock()
+_HEALTH_LAST_UPDATE: float = 0.0
+WATCHDOG_INTERVAL = 30                  # Sekunden zwischen Polls
+WATCHDOG_STALE_AFTER = 90               # Cache älter als 90s = treat as unknown
+
+
+def _refresh_model_health(port: int) -> None:
+    """Pollt /v1/models und baut _MODEL_HEALTH neu auf."""
+    global _MODEL_HEALTH, _HEALTH_LAST_UPDATE
+    try:
+        url = f"http://127.0.0.1:{port}/v1/models"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        new_health = {}
+        for m in data.get("data", []):
+            nid = str(m.get("numerical_id", "")).strip()
+            status = str(m.get("status", "")).strip().upper()
+            if nid:
+                new_health[nid] = status or "UNKNOWN"
+        with _HEALTH_LOCK:
+            # Log changes
+            for nid, status in new_health.items():
+                old = _MODEL_HEALTH.get(nid)
+                if old is not None and old != status:
+                    _logger.info(
+                        "Watchdog: Modell %s status changed %s → %s",
+                        nid, old, status,
+                    )
+            _MODEL_HEALTH = new_health
+            _HEALTH_LAST_UPDATE = time.time()
+    except Exception as exc:
+        _logger.debug("Watchdog refresh failed: %s", exc)
+
+
+def _watchdog_loop(port: int, stop_flag: dict) -> None:
+    """Hintergrund-Thread: pollt /v1/models in regelmäßigen Abständen."""
+    while not stop_flag.get("flag"):
+        _refresh_model_health(port)
+        # Schlaf in 1s-Häppchen, damit shutdown schnell greift
+        for _ in range(WATCHDOG_INTERVAL):
+            if stop_flag.get("flag"):
+                return
+            time.sleep(1)
+
+
+def _model_is_healthy(numerical_id: str) -> tuple[bool, str]:
+    """Liefert (is_healthy, status). Bei abgelaufenem Cache: (True, 'STALE')
+    — d.h. wir vertrauen darauf bis wir Gegenteiliges wissen."""
+    with _HEALTH_LOCK:
+        if time.time() - _HEALTH_LAST_UPDATE > WATCHDOG_STALE_AFTER:
+            return (True, "STALE")
+        status = _MODEL_HEALTH.get(str(numerical_id), "UNKNOWN")
+    return (status == "OK", status)
+
+
+def _resolve_fallback(numerical_id: str, cfg: dict) -> str | None:
+    """Aus owltrail.conf["model_fallbacks"]: {"242": "250", "120": "free", ...}
+    Liefert das erste gesunde Fallback in der Kette (max 3 Hops)."""
+    fallbacks = cfg.get("model_fallbacks") or {}
+    seen = {str(numerical_id)}
+    current = str(numerical_id)
+    for _ in range(3):
+        nxt = fallbacks.get(current)
+        if not nxt or nxt in seen:
+            return None
+        nxt = str(nxt)
+        seen.add(nxt)
+        # Wenn das Fallback selbst gesund ist (oder Cache stale), nimm es
+        ok, _ = _model_is_healthy(nxt)
+        if ok:
+            return nxt
+        current = nxt
+    return None
+
 
 def _build_dynamic_model_map(port: int) -> None:
     """Holt /v1/models vom eigenen Adapter-Port und befüllt _DYNAMIC_MODEL_MAP.
@@ -283,6 +370,7 @@ def _collect_sse_to_json(handler, path, body):
 
     def _fetch():
         raw_chunks: list[bytes] = []
+        resp = None
         try:
             resp = urllib.request.urlopen(req, timeout=timeout)
             while True:
@@ -290,7 +378,6 @@ def _collect_sse_to_json(handler, path, body):
                 if not chunk:
                     break
                 raw_chunks.append(chunk)
-            resp.close()
             result_q.put(("ok", raw_chunks))
         except urllib.error.HTTPError as exc:
             err_body = exc.read()
@@ -299,6 +386,12 @@ def _collect_sse_to_json(handler, path, body):
         except Exception as exc:
             _logger.error("Backend-Fehler beim Einsammeln [%s]: %s", path, exc)
             result_q.put(("error", str(exc)))
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     threading.Thread(target=_fetch, daemon=True).start()
 
@@ -444,9 +537,11 @@ def install_stream_handling_patch() -> None:
                 _collect_sse_to_json(self, path, body)
                 self.close_connection = True
                 return
-        original_proxy(self, path, body)
-        if is_chat:
-            self.close_connection = True
+        try:
+            original_proxy(self, path, body)
+        finally:
+            if is_chat:
+                self.close_connection = True
 
     owltrail._Handler._proxy = _patched_proxy
     _stream_patch_installed = True
@@ -481,7 +576,41 @@ def install_model_mapping_patch() -> None:
                 if isinstance(data, dict) and "model" in data:
                     original_model = str(data.get("model", ""))
                     mapped = get_model_id(original_model)
+                    # DEBUG: jeder Chat-Request — Modell + Tool-Felder
+                    _tools_dbg = data.get("tools")
+                    _logger.info(
+                        "Chat-Request: model=%r mapped=%r tools=%s tool_choice=%r",
+                        original_model,
+                        mapped,
+                        f"{len(_tools_dbg)} items" if isinstance(_tools_dbg, list) else type(_tools_dbg).__name__,
+                        data.get("tool_choice"),
+                    )
                     if mapped:
+                        # ── Watchdog: Health-Check + Fallback ──────────────
+                        ok, status = _model_is_healthy(mapped)
+                        if not ok:
+                            cfg = load_conf(_conf_path())
+                            fb = _resolve_fallback(mapped, cfg)
+                            if fb:
+                                _logger.warning(
+                                    "Watchdog: Modell %s ist %s → Fallback auf %s",
+                                    mapped, status, fb,
+                                )
+                                mapped = fb
+                            else:
+                                # Kein Fallback konfiguriert → fast-fail mit klarer Message
+                                _logger.warning(
+                                    "Watchdog: Modell %s ist %s und kein Fallback konfiguriert",
+                                    mapped, status,
+                                )
+                                # Wir können hier nicht direkt 503 schicken (der Caller
+                                # erwartet ja, dass _build_request einen Request liefert).
+                                # Setzen stattdessen ein Header-Flag, damit ein nachgelagerter
+                                # Patch das mappen kann — für jetzt: lassen wir durch und
+                                # ggf. timed der Call schnell aus (Backend-Watchdog).
+                                # TODO: dedicated 503-Pfad im Handler.
+                                pass
+
                         data["model"] = mapped
                         # Ollama unterstützt keine DeepSeek-spezifischen
                         # Reasoning-Parameter (reasoning_effort, thinking).
@@ -494,6 +623,15 @@ def install_model_mapping_patch() -> None:
                             data.pop("stream_options", None) # Ollama kennt kein stream_options
                             # tools/tool_choice werden durchgeleitet — neue Qwen3.6-Tool-Modelle
                             # (ID 241/239) unterstützen natives OpenAI-konformes Tool-Calling.
+                            # DEBUG: Welche Tool-Felder werden tatsaechlich geschickt?
+                            _tools = data.get("tools")
+                            _logger.info(
+                                "Ollama-Request: model=%s tools=%s tool_choice=%s keys=%s",
+                                original_model,
+                                f"{len(_tools)} items" if isinstance(_tools, list) else type(_tools).__name__,
+                                data.get("tool_choice"),
+                                sorted(data.keys()),
+                            )
                         body = json.dumps(data).encode()
             except (ValueError, TypeError):
                 # Body kein JSON → unverändert weiterleiten
@@ -525,13 +663,32 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     conf_path = args.conf or _conf_path()
-    cfg = load_conf(conf_path)
-    port = args.port or int(cfg.get("listen_port", 8081))
-
     log_path = args.log or os.path.join(
         os.path.dirname(os.path.realpath(__file__)), "owltrail.log"
     )
-    owltrail.setup_logging(log_path, verbose=args.verbose)
+
+    # Sofort Logging initialisieren (vor load_conf), damit Config-Fehler
+    # nicht spurlos verschwinden.
+    try:
+        owltrail.setup_logging(log_path, verbose=args.verbose)
+    except Exception:
+        # Fallback: stderr falls Log-Pfad nicht schreibbar
+        import logging as _logging
+        _logging.basicConfig(
+            level=_logging.DEBUG if args.verbose else _logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            stream=sys.stderr,
+        )
+
+    try:
+        cfg = load_conf(conf_path)
+    except Exception as e:
+        _logger.critical("Konnte owltrail.conf nicht laden: %s", e)
+        sys.stderr.write(f"[owltrail-adapter] FATAL: {conf_path}: {e}\n")
+        sys.stderr.flush()
+        return 1
+
+    port = args.port or int(cfg.get("listen_port", 8081))
 
     if not args.no_mapping:
         install_model_mapping_patch()
@@ -554,6 +711,24 @@ def main(argv=None) -> int:
         _build_dynamic_model_map(port)
 
     stop = {"flag": False, "count": 0}
+
+    # ── Modell-Health-Watchdog starten ──────────────────────────────────────
+    # Initial sofort einmal pollen, damit der erste Request bereits den Cache hat
+    _refresh_model_health(port)
+    watchdog_thread = threading.Thread(
+        target=_watchdog_loop,
+        args=(port, stop),
+        daemon=True,
+        name="model-health-watchdog",
+    )
+    watchdog_thread.start()
+    fallbacks = (cfg.get("model_fallbacks") or {})
+    sys.stdout.write(
+        f"[owltrail-adapter] watchdog: poll all {WATCHDOG_INTERVAL}s, "
+        f"{len(_MODEL_HEALTH)} models tracked, "
+        f"{len(fallbacks)} fallbacks configured\n"
+    )
+    sys.stdout.flush()
 
     def _shutdown(_sig, _frm):
         stop["flag"] = True

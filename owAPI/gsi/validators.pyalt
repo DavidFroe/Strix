@@ -1,0 +1,167 @@
+# gsi/validators.py
+from __future__ import annotations
+from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+
+@dataclass
+class ActionResult:
+    action: str
+    row: Optional[int]
+    status: str
+    error: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"action": self.action, "status": self.status}
+        if self.row is not None:
+            out["row"] = self.row
+        if self.status == "failed" and self.error:
+            out["error"] = self.error
+        if self.details is not None:
+            out["details"] = self.details
+        return out
+
+# Erlaubte Aktionen
+ROW_ACTIONS = {
+    "append", "edit", "delete", "comment",
+    # neu freigeschaltet:
+    "find_rows", "edit_where", "delete_where",
+}
+TAB_ACTIONS = {"create_tab", "delete_tab", "rename_tab", "set_headers", "list_tabs"}
+ACCEPTED_TYPES = ROW_ACTIONS | TAB_ACTIONS
+
+def _is_int(v: Any) -> bool:
+    try:
+        return isinstance(v, int) or (isinstance(v, str) and v.isdigit())
+    except Exception:
+        return False
+
+def prevalidate_actions(
+    actions: List[dict],
+    headers: List[str] | None,
+    default_ws: Optional[str],
+    diagnostics: List[Dict[str, Any]],
+) -> Tuple[List[ActionResult], List[dict]]:
+    pre_results: List[ActionResult] = []
+    remaining: List[dict] = []
+
+    for i, a in enumerate(actions):
+        t = a.get("type")
+        if not t:
+            diagnostics.append({"level":"error","code":"missing_type","message":f"Action {i}: 'type' fehlt."})
+            pre_results.append(ActionResult("unknown", None, "failed", "Aktionstyp fehlt"))
+            continue
+        if t not in ACCEPTED_TYPES:
+            diagnostics.append({"level":"error","code":"unknown_type","message":f"Action {i}: unbekannter Typ '{t}'."})
+            pre_results.append(ActionResult(t, None, "failed", f"Unbekannter Aktionstyp '{t}'"))
+            continue
+
+        ws = a.get("worksheet", default_ws)
+
+        # ---- Zeilenaktionen (klassisch) ----
+        if t in {"edit", "comment", "delete"}:
+            row = a.get("row")
+            if not isinstance(row, int):
+                diagnostics.append({"level":"error","code":"row_required","message":f"Action {i}: 'row' muss Zahl sein (≥2)."})
+                pre_results.append(ActionResult(t, None, "failed", "Zeilennummer fehlt oder ungültig"))
+                continue
+            if t in {"edit", "comment"}:
+                vals = a.get("values")
+                if not isinstance(vals, dict):
+                    diagnostics.append({"level":"error","code":"values_required","message":f"Action {i}: 'values' muss Objekt sein."})
+                    pre_results.append(ActionResult(t, row, "failed", "'values' fehlt/ungültig"))
+                    continue
+                if headers:
+                    unknown = [k for k in vals.keys() if k not in headers]
+                    if unknown:
+                        diagnostics.append({"level":"error","code":"unknown_columns","message":f"Action {i}: unbekannte Spalten {unknown}."})
+                        pre_results.append(ActionResult(t, row, "failed", f"Unbekannte Spalten: {', '.join(unknown)}"))
+                        continue
+
+        if t == "append":
+            vals = a.get("values")
+            if not isinstance(vals, dict):
+                diagnostics.append({"level":"error","code":"values_required","message":f"Action {i}: 'values' muss Objekt sein."})
+                pre_results.append(ActionResult(t, None, "failed", "'values' fehlt/ungültig"))
+                continue
+            if headers:
+                unknown = [k for k in vals.keys() if k not in headers]
+                if unknown:
+                    diagnostics.append({"level":"error","code":"unknown_columns","message":f"Action {i}: unbekannte Spalten {unknown}."})
+                    pre_results.append(ActionResult(t, None, "failed", f"Unbekannte Spalten: {', '.join(unknown)}"))
+                    continue
+
+        # ---- Filter-/Bulk-Aktionen ----
+        if t == "find_rows":
+            where = a.get("where")
+            if where is not None and not isinstance(where, dict):
+                diagnostics.append({"level":"error","code":"where_invalid","message":f"Action {i}: 'where' muss Objekt sein (oder fehlen)."})
+                pre_results.append(ActionResult(t, None, "failed", "Ungültiges 'where'"))
+                continue
+            off = a.get("offset")
+            if off is not None and not _is_int(off):
+                diagnostics.append({"level":"error","code":"offset_invalid","message":f"Action {i}: 'offset' muss int sein."})
+                pre_results.append(ActionResult(t, None, "failed", "Ungültiger 'offset'"))
+                continue
+
+        if t == "edit_where":
+            where = a.get("where")
+            vals = a.get("values")
+            if not isinstance(where, dict):
+                diagnostics.append({"level":"error","code":"where_required","message":f"Action {i}: 'where' (Objekt) erforderlich."})
+                pre_results.append(ActionResult(t, None, "failed", "'where' fehlt"))
+                continue
+            if not isinstance(vals, dict):
+                diagnostics.append({"level":"error","code":"values_required","message":f"Action {i}: 'values' (Objekt) erforderlich."})
+                pre_results.append(ActionResult(t, None, "failed", "'values' fehlt"))
+                continue
+            if headers:
+                unknown = [k for k in vals.keys() if k not in headers]
+                if unknown:
+                    diagnostics.append({"level":"error","code":"unknown_columns","message":f"Action {i}: unbekannte Spalten {unknown}."})
+                    pre_results.append(ActionResult(t, None, "failed", f"Unbekannte Spalten: {', '.join(unknown)}"))
+                    continue
+
+        if t == "delete_where":
+            where = a.get("where")
+            if not isinstance(where, dict):
+                diagnostics.append({"level":"error","code":"where_required","message":f"Action {i}: 'where' (Objekt) erforderlich."})
+                pre_results.append(ActionResult(t, None, "failed", "'where' fehlt"))
+                continue
+
+        # ---- Tab-Management ----
+        if t in {"create_tab", "delete_tab", "rename_tab", "set_headers", "list_tabs"}:
+            if t != "list_tabs" and not ws:
+                diagnostics.append({"level":"error","code":"worksheet_required","message":f"Action {i}: 'worksheet' fehlt."})
+                pre_results.append(ActionResult(t, None, "failed", "Worksheet-Name fehlt"))
+                continue
+            if t == "rename_tab" and not a.get("new_name"):
+                diagnostics.append({"level":"error","code":"new_name_required","message":f"Action {i}: 'new_name' fehlt."})
+                pre_results.append(ActionResult(t, None, "failed", "Neuer Name fehlt"))
+                continue
+            if t == "set_headers":
+                schema = a.get("schema")
+                if not isinstance(schema, list) or not schema:
+                    diagnostics.append({"level":"error","code":"schema_required","message":f"Action {i}: 'schema' (Array) erforderlich."})
+                    pre_results.append(ActionResult(t, None, "failed", "Schema fehlt oder leer"))
+                    continue
+
+        # ---- Normalisierte Action weiterreichen ----
+        a_norm = dict(a)
+        if ws is not None:
+            a_norm["worksheet"] = ws
+        if "offset" in a_norm and _is_int(a_norm["offset"]):
+            a_norm["offset"] = int(a_norm["offset"])
+        if "limit" in a_norm and _is_int(a_norm["limit"]):
+            a_norm["limit"] = int(a_norm["limit"])
+            
+                    
+        try:
+            import logging
+            logging.getLogger().setLevel(logging.DEBUG)
+            logging.debug(f"[validators] accept type={t!r} ws={ws!r}")
+        except Exception:
+            pass            
+        remaining.append(a_norm)
+
+    return pre_results, remaining

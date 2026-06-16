@@ -100,3 +100,5 @@ apps/
 
 # Maintainer-internal design notes (trade-secret material, never published)
 .private/
+owAPI/owapi-*.json
+owAPI/service_account.json

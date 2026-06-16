@@ -459,14 +459,16 @@ pub struct CycleArchiveHeader {
     pub message_count: usize,
 }
 
-/// Resolve the on-disk archive directory: `~/.deepseek/sessions/<id>/cycles`.
+/// Resolve the on-disk archive directory.
+///
+/// Mirrors `session_manager::default_sessions_dir()` (which is now
+/// `$cwd/sessions/`), so cycle archives land in
+/// `$cwd/sessions/<id>/cycles/`. Stays co-located with the session JSON
+/// file, identical to how it worked under `~/.deepseek/sessions/`.
 fn archive_dir_for(session_id: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not resolve home directory for cycle archive")?;
-    Ok(home
-        .join(".deepseek")
-        .join("sessions")
-        .join(session_id)
-        .join("cycles"))
+    let sessions_dir = crate::session_manager::default_sessions_dir()
+        .context("Could not resolve sessions directory for cycle archive")?;
+    Ok(sessions_dir.join(session_id).join("cycles"))
 }
 
 /// Archive a cycle's messages to JSONL on disk and return the path written.

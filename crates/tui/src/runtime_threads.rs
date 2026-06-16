@@ -4,14 +4,16 @@
 //! semantics (threads, turns, items, interrupt/steer, and replayable events).
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, broadcast, oneshot};
@@ -196,240 +198,314 @@ pub struct RuntimeEventRecord {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeStoreState {
-    #[serde(default = "default_runtime_schema_version")]
-    schema_version: u32,
-    next_seq: u64,
-}
-
-impl Default for RuntimeStoreState {
-    fn default() -> Self {
-        Self {
-            schema_version: CURRENT_RUNTIME_SCHEMA_VERSION,
-            next_seq: 1,
-        }
-    }
-}
-
+/// SQLite-backed persistence for threads, turns, items and events.
+///
+/// All records are serialized as JSON in TEXT columns; a handful of fields
+/// (id, thread_id, schema_version, sort keys) are mirrored as explicit
+/// columns so we can index/filter without parsing JSON.
+///
+/// Layout: a single `verlauf.db` file in the workspace root (or wherever
+/// `RuntimeThreadStore::open` is pointed at). No more per-record JSON files
+/// scattered under `~/.deepseek/tasks/runtime/`.
 #[derive(Debug, Clone)]
 pub struct RuntimeThreadStore {
-    threads_dir: PathBuf,
-    turns_dir: PathBuf,
-    items_dir: PathBuf,
-    events_dir: PathBuf,
-    state_path: PathBuf,
-    state: Arc<Mutex<RuntimeStoreState>>,
+    conn: Arc<StdMutex<Connection>>,
 }
 
 impl RuntimeThreadStore {
     pub fn open(root: PathBuf) -> Result<Self> {
-        let threads_dir = root.join("threads");
-        let turns_dir = root.join("turns");
-        let items_dir = root.join("items");
-        let events_dir = root.join("events");
-        fs::create_dir_all(&threads_dir)
-            .with_context(|| format!("Failed to create {}", threads_dir.display()))?;
-        fs::create_dir_all(&turns_dir)
-            .with_context(|| format!("Failed to create {}", turns_dir.display()))?;
-        fs::create_dir_all(&items_dir)
-            .with_context(|| format!("Failed to create {}", items_dir.display()))?;
-        fs::create_dir_all(&events_dir)
-            .with_context(|| format!("Failed to create {}", events_dir.display()))?;
+        fs::create_dir_all(&root)
+            .with_context(|| format!("Failed to create store root {}", root.display()))?;
+        let db_path = root.join("verlauf.db");
+        let conn = Connection::open(&db_path)
+            .with_context(|| format!("Failed to open SQLite db {}", db_path.display()))?;
 
-        let state_path = root.join("state.json");
-        let state = if state_path.exists() {
-            let raw = fs::read_to_string(&state_path)
-                .with_context(|| format!("Failed to read {}", state_path.display()))?;
-            serde_json::from_str::<RuntimeStoreState>(&raw)
-                .with_context(|| format!("Failed to parse {}", state_path.display()))?
-        } else {
-            let default = RuntimeStoreState::default();
-            write_json_atomic(&state_path, &default)?;
-            default
-        };
+        // WAL gives concurrent readers while a writer is mid-transaction —
+        // important because /v1/threads/{id}/events streams while turns
+        // append new rows in parallel.
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS threads (
+                id              TEXT    PRIMARY KEY,
+                schema_version  INTEGER NOT NULL,
+                json            TEXT    NOT NULL,
+                updated_at      TEXT    NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS turns (
+                id              TEXT    PRIMARY KEY,
+                thread_id       TEXT    NOT NULL,
+                schema_version  INTEGER NOT NULL,
+                json            TEXT    NOT NULL,
+                created_at      TEXT    NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_turns_thread ON turns(thread_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS items (
+                id              TEXT    PRIMARY KEY,
+                turn_id         TEXT    NOT NULL,
+                schema_version  INTEGER NOT NULL,
+                json            TEXT    NOT NULL,
+                started_at      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_items_turn ON items(turn_id, started_at);
+
+            CREATE TABLE IF NOT EXISTS events (
+                seq             INTEGER PRIMARY KEY,
+                thread_id       TEXT    NOT NULL,
+                json            TEXT    NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, seq);
+
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            "#,
+        )
+        .context("Failed to initialise verlauf.db schema")?;
+
+        // Seed the event sequence counter if this is a fresh DB.
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('next_event_seq', '1')",
+            [],
+        )?;
 
         Ok(Self {
-            threads_dir,
-            turns_dir,
-            items_dir,
-            events_dir,
-            state_path,
-            state: Arc::new(Mutex::new(state)),
+            conn: Arc::new(StdMutex::new(conn)),
         })
     }
 
-    fn record_path(base: &Path, id: &str, extension: &str, label: &str) -> Result<PathBuf> {
-        let id = validated_record_id(id, label)?;
-        Ok(base.join(format!("{id}.{extension}")))
+    fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        // Conn-Mutex ist nur poisoned wenn ein vorheriger Writer paniert hat.
+        // Wir können in dem Fall trotzdem weiterlesen — die DB selbst ist OK.
+        self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn thread_path(&self, thread_id: &str) -> Result<PathBuf> {
-        Self::record_path(&self.threads_dir, thread_id, "json", "thread id")
-    }
-
-    fn turn_path(&self, turn_id: &str) -> Result<PathBuf> {
-        Self::record_path(&self.turns_dir, turn_id, "json", "turn id")
-    }
-
-    fn item_path(&self, item_id: &str) -> Result<PathBuf> {
-        Self::record_path(&self.items_dir, item_id, "json", "item id")
-    }
-
-    fn events_path(&self, thread_id: &str) -> Result<PathBuf> {
-        Self::record_path(&self.events_dir, thread_id, "jsonl", "thread id")
-    }
-
-    pub fn save_thread(&self, thread: &ThreadRecord) -> Result<()> {
-        write_json_atomic(&self.thread_path(&thread.id)?, thread)
-    }
-
-    pub fn save_turn(&self, turn: &TurnRecord) -> Result<()> {
-        validated_record_id(&turn.thread_id, "thread id")?;
-        write_json_atomic(&self.turn_path(&turn.id)?, turn)
-    }
-
-    pub fn save_item(&self, item: &TurnItemRecord) -> Result<()> {
-        validated_record_id(&item.turn_id, "turn id")?;
-        write_json_atomic(&self.item_path(&item.id)?, item)
-    }
-
-    pub fn load_thread(&self, thread_id: &str) -> Result<ThreadRecord> {
-        let path = self.thread_path(thread_id)?;
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read thread {}", path.display()))?;
-        let record: ThreadRecord = serde_json::from_str(&raw)
-            .with_context(|| format!("Failed to parse thread {}", path.display()))?;
-        if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
+    fn enforce_schema_version(record_kind: &str, version: u32) -> Result<()> {
+        if version > CURRENT_RUNTIME_SCHEMA_VERSION {
             bail!(
-                "Thread schema v{} is newer than supported v{}",
-                record.schema_version,
+                "{record_kind} schema v{version} is newer than supported v{}",
                 CURRENT_RUNTIME_SCHEMA_VERSION
             );
         }
+        Ok(())
+    }
+
+    /// Hard-delete: entfernt den Thread komplett mit allen Turns, Items und
+    /// Events. Irreversibel.
+    pub fn delete_thread_full(&self, thread_id: &str) -> Result<()> {
+        validated_record_id(thread_id, "thread id")?;
+        let conn = self.lock_conn();
+        // FK cascades fehlen im Schema → wir löschen manuell in Reihenfolge.
+        conn.execute(
+            "DELETE FROM items WHERE turn_id IN (SELECT id FROM turns WHERE thread_id = ?1)",
+            params![thread_id],
+        )?;
+        conn.execute("DELETE FROM turns WHERE thread_id = ?1", params![thread_id])?;
+        conn.execute("DELETE FROM events WHERE thread_id = ?1", params![thread_id])?;
+        conn.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])?;
+        Ok(())
+    }
+
+    pub fn save_thread(&self, thread: &ThreadRecord) -> Result<()> {
+        validated_record_id(&thread.id, "thread id")?;
+        let json = serde_json::to_string(thread)?;
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO threads (id, schema_version, json, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                schema_version = excluded.schema_version,
+                json           = excluded.json,
+                updated_at     = excluded.updated_at",
+            params![
+                thread.id,
+                thread.schema_version,
+                json,
+                thread.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_turn(&self, turn: &TurnRecord) -> Result<()> {
+        validated_record_id(&turn.id, "turn id")?;
+        validated_record_id(&turn.thread_id, "thread id")?;
+        let json = serde_json::to_string(turn)?;
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO turns (id, thread_id, schema_version, json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                thread_id      = excluded.thread_id,
+                schema_version = excluded.schema_version,
+                json           = excluded.json,
+                created_at     = excluded.created_at",
+            params![
+                turn.id,
+                turn.thread_id,
+                turn.schema_version,
+                json,
+                turn.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_item(&self, item: &TurnItemRecord) -> Result<()> {
+        validated_record_id(&item.id, "item id")?;
+        validated_record_id(&item.turn_id, "turn id")?;
+        let json = serde_json::to_string(item)?;
+        let started_at = item.started_at.map(|t| t.to_rfc3339());
+        let conn = self.lock_conn();
+        conn.execute(
+            "INSERT INTO items (id, turn_id, schema_version, json, started_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                turn_id        = excluded.turn_id,
+                schema_version = excluded.schema_version,
+                json           = excluded.json,
+                started_at     = excluded.started_at",
+            params![
+                item.id,
+                item.turn_id,
+                item.schema_version,
+                json,
+                started_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_thread(&self, thread_id: &str) -> Result<ThreadRecord> {
+        let thread_id = validated_record_id(thread_id, "thread id")?;
+        let conn = self.lock_conn();
+        let row: Option<(String, u32)> = conn
+            .query_row(
+                "SELECT json, schema_version FROM threads WHERE id = ?1",
+                [thread_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((json, version)) = row else {
+            bail!("Thread {thread_id} not found");
+        };
+        Self::enforce_schema_version("Thread", version)?;
+        let record: ThreadRecord = serde_json::from_str(&json)
+            .with_context(|| format!("Failed to parse thread {thread_id} json"))?;
         Ok(record)
     }
 
     pub fn load_turn(&self, turn_id: &str) -> Result<TurnRecord> {
-        let path = self.turn_path(turn_id)?;
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read turn {}", path.display()))?;
-        let record: TurnRecord = serde_json::from_str(&raw)
-            .with_context(|| format!("Failed to parse turn {}", path.display()))?;
-        if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
-            bail!(
-                "Turn schema v{} is newer than supported v{}",
-                record.schema_version,
-                CURRENT_RUNTIME_SCHEMA_VERSION
-            );
-        }
+        let turn_id = validated_record_id(turn_id, "turn id")?;
+        let conn = self.lock_conn();
+        let row: Option<(String, u32)> = conn
+            .query_row(
+                "SELECT json, schema_version FROM turns WHERE id = ?1",
+                [turn_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((json, version)) = row else {
+            bail!("Turn {turn_id} not found");
+        };
+        Self::enforce_schema_version("Turn", version)?;
+        let record: TurnRecord = serde_json::from_str(&json)
+            .with_context(|| format!("Failed to parse turn {turn_id} json"))?;
         Ok(record)
     }
 
     pub fn load_item(&self, item_id: &str) -> Result<TurnItemRecord> {
-        let path = self.item_path(item_id)?;
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read item {}", path.display()))?;
-        let record: TurnItemRecord = serde_json::from_str(&raw)
-            .with_context(|| format!("Failed to parse item {}", path.display()))?;
-        if record.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
-            bail!(
-                "Item schema v{} is newer than supported v{}",
-                record.schema_version,
-                CURRENT_RUNTIME_SCHEMA_VERSION
-            );
-        }
+        let item_id = validated_record_id(item_id, "item id")?;
+        let conn = self.lock_conn();
+        let row: Option<(String, u32)> = conn
+            .query_row(
+                "SELECT json, schema_version FROM items WHERE id = ?1",
+                [item_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((json, version)) = row else {
+            bail!("Item {item_id} not found");
+        };
+        Self::enforce_schema_version("Item", version)?;
+        let record: TurnItemRecord = serde_json::from_str(&json)
+            .with_context(|| format!("Failed to parse item {item_id} json"))?;
         Ok(record)
     }
 
     pub fn list_threads(&self) -> Result<Vec<ThreadRecord>> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT json, schema_version FROM threads ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let json: String = r.get(0)?;
+            let version: u32 = r.get(1)?;
+            Ok((json, version))
+        })?;
         let mut out = Vec::new();
-        for entry in fs::read_dir(&self.threads_dir)
-            .with_context(|| format!("Failed to read {}", self.threads_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
-            let thread: ThreadRecord = serde_json::from_str(&raw)
-                .with_context(|| format!("Failed to parse {}", path.display()))?;
-            if thread.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
-                bail!(
-                    "Thread schema v{} is newer than supported v{}",
-                    thread.schema_version,
-                    CURRENT_RUNTIME_SCHEMA_VERSION
-                );
-            }
-            out.push(thread);
+        for row in rows {
+            let (json, version) = row?;
+            Self::enforce_schema_version("Thread", version)?;
+            let rec: ThreadRecord =
+                serde_json::from_str(&json).context("Failed to parse thread json")?;
+            out.push(rec);
         }
-        out.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
         Ok(out)
     }
 
     pub fn list_turns_for_thread(&self, thread_id: &str) -> Result<Vec<TurnRecord>> {
-        validated_record_id(thread_id, "thread id")?;
+        let thread_id = validated_record_id(thread_id, "thread id")?;
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT json, schema_version FROM turns
+             WHERE thread_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([thread_id], |r| {
+            let json: String = r.get(0)?;
+            let version: u32 = r.get(1)?;
+            Ok((json, version))
+        })?;
         let mut out = Vec::new();
-        for entry in fs::read_dir(&self.turns_dir)
-            .with_context(|| format!("Failed to read {}", self.turns_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
-            let turn: TurnRecord = serde_json::from_str(&raw)
-                .with_context(|| format!("Failed to parse {}", path.display()))?;
-            if turn.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
-                bail!(
-                    "Turn schema v{} is newer than supported v{}",
-                    turn.schema_version,
-                    CURRENT_RUNTIME_SCHEMA_VERSION
-                );
-            }
-            if turn.thread_id == thread_id {
-                out.push(turn);
-            }
+        for row in rows {
+            let (json, version) = row?;
+            Self::enforce_schema_version("Turn", version)?;
+            let rec: TurnRecord =
+                serde_json::from_str(&json).context("Failed to parse turn json")?;
+            out.push(rec);
         }
-        out.sort_by_key(|a| a.created_at);
         Ok(out)
     }
 
     pub fn list_items_for_turn(&self, turn_id: &str) -> Result<Vec<TurnItemRecord>> {
-        validated_record_id(turn_id, "turn id")?;
+        let turn_id = validated_record_id(turn_id, "turn id")?;
+        let conn = self.lock_conn();
+        // started_at can be NULL for items that haven't been pushed forward yet;
+        // sort those last (they're effectively pending).
+        let mut stmt = conn.prepare(
+            "SELECT json, schema_version FROM items
+             WHERE turn_id = ?1
+             ORDER BY (started_at IS NULL), started_at ASC",
+        )?;
+        let rows = stmt.query_map([turn_id], |r| {
+            let json: String = r.get(0)?;
+            let version: u32 = r.get(1)?;
+            Ok((json, version))
+        })?;
         let mut out = Vec::new();
-        for entry in fs::read_dir(&self.items_dir)
-            .with_context(|| format!("Failed to read {}", self.items_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
-            let item: TurnItemRecord = serde_json::from_str(&raw)
-                .with_context(|| format!("Failed to parse {}", path.display()))?;
-            if item.schema_version > CURRENT_RUNTIME_SCHEMA_VERSION {
-                bail!(
-                    "Item schema v{} is newer than supported v{}",
-                    item.schema_version,
-                    CURRENT_RUNTIME_SCHEMA_VERSION
-                );
-            }
-            if item.turn_id == turn_id {
-                out.push(item);
-            }
+        for row in rows {
+            let (json, version) = row?;
+            Self::enforce_schema_version("Item", version)?;
+            let rec: TurnItemRecord =
+                serde_json::from_str(&json).context("Failed to parse item json")?;
+            out.push(rec);
         }
-        out.sort_by(|a, b| {
-            let left = a.started_at.unwrap_or_else(Utc::now);
-            let right = b.started_at.unwrap_or_else(Utc::now);
-            left.cmp(&right)
-        });
         Ok(out)
     }
 
@@ -448,13 +524,24 @@ impl RuntimeThreadStore {
         if let Some(item_id) = item_id {
             validated_record_id(item_id, "item id")?;
         }
-        let path = self.events_path(thread_id)?;
 
-        let mut state = self.state.lock().await;
-        let seq = state.next_seq;
-        state.next_seq = state.next_seq.saturating_add(1);
-        write_json_atomic(&self.state_path, &*state)?;
-        drop(state);
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+
+        // Pull-and-increment the next seq atomically inside the transaction.
+        let seq: u64 = tx.query_row(
+            "SELECT value FROM meta WHERE key = 'next_event_seq'",
+            [],
+            |r| {
+                let v: String = r.get(0)?;
+                Ok(v.parse::<u64>().unwrap_or(1))
+            },
+        )?;
+        let next = seq.saturating_add(1);
+        tx.execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'next_event_seq'",
+            params![next.to_string()],
+        )?;
 
         let record = RuntimeEventRecord {
             schema_version: CURRENT_RUNTIME_SCHEMA_VERSION,
@@ -466,18 +553,12 @@ impl RuntimeThreadStore {
             event: event.into(),
             payload,
         };
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("Failed to open {}", path.display()))?;
-        let line = serde_json::to_string(&record)?;
-        writeln!(file, "{line}").with_context(|| format!("Failed to append {}", path.display()))?;
-        file.flush()
-            .with_context(|| format!("Failed to flush {}", path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("Failed to fsync {}", path.display()))?;
+        let json = serde_json::to_string(&record)?;
+        tx.execute(
+            "INSERT INTO events (seq, thread_id, json) VALUES (?1, ?2, ?3)",
+            params![seq as i64, record.thread_id, json],
+        )?;
+        tx.commit()?;
         Ok(record)
     }
 
@@ -486,34 +567,41 @@ impl RuntimeThreadStore {
         thread_id: &str,
         since_seq: Option<u64>,
     ) -> Result<Vec<RuntimeEventRecord>> {
-        let path = self.events_path(thread_id)?;
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let file =
-            File::open(&path).with_context(|| format!("Failed to open {}", path.display()))?;
-        let reader = BufReader::new(file);
+        let thread_id = validated_record_id(thread_id, "thread id")?;
+        let conn = self.lock_conn();
+        let since = since_seq.unwrap_or(0) as i64;
+        let mut stmt = conn.prepare(
+            "SELECT json FROM events
+             WHERE thread_id = ?1 AND seq > ?2
+             ORDER BY seq ASC",
+        )?;
+        let rows = stmt.query_map(params![thread_id, since], |r| {
+            let json: String = r.get(0)?;
+            Ok(json)
+        })?;
         let mut out = Vec::new();
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let event: RuntimeEventRecord = serde_json::from_str(&line)
-                .with_context(|| format!("Failed to parse event line in {}", path.display()))?;
-            if let Some(since) = since_seq
-                && event.seq <= since
-            {
-                continue;
-            }
-            out.push(event);
+        for row in rows {
+            let json = row?;
+            let rec: RuntimeEventRecord =
+                serde_json::from_str(&json).context("Failed to parse event json")?;
+            out.push(rec);
         }
         Ok(out)
     }
 
     pub async fn current_seq(&self) -> u64 {
-        let state = self.state.lock().await;
-        state.next_seq.saturating_sub(1)
+        let conn = self.lock_conn();
+        let next: u64 = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'next_event_seq'",
+                [],
+                |r| {
+                    let v: String = r.get(0)?;
+                    Ok(v.parse::<u64>().unwrap_or(1))
+                },
+            )
+            .unwrap_or(1);
+        next.saturating_sub(1)
     }
 }
 
@@ -877,6 +965,12 @@ impl RuntimeThreadManager {
             .store
             .append_event(thread_id, turn_id, item_id, event, payload)
             .await?;
+        // Best-effort: spiegele bestimmte Events als Markdown ins Workspace.
+        // Failure (z.B. Disk voll, read-only Workspace) darf den Turn nicht
+        // killen — wir loggen nur und fahren fort.
+        if let Err(err) = mirror_to_markdown(&self.workspace, &record) {
+            tracing::debug!("verlauf.md mirror failed: {err}");
+        }
         if let Err(e) = self.event_tx.send(record.clone()) {
             tracing::debug!(
                 "Runtime event broadcast failed (no receivers or channel full): {}",
@@ -1166,6 +1260,20 @@ impl RuntimeThreadManager {
         let thread = self.get_thread(id).await?;
         self.ensure_engine_loaded(&thread).await?;
         Ok(thread)
+    }
+
+    /// Löscht einen Thread komplett aus der DB. Wenn er aktuell geladen ist,
+    /// wird vorher der Engine-Slot freigegeben damit kein laufender Turn
+    /// in die jetzt verschwundene Zeile schreibt.
+    pub async fn delete_thread(&self, id: &str) -> Result<()> {
+        validated_record_id(id, "thread id")?;
+        {
+            let mut active = self.active.lock().await;
+            active.engines.remove(id);
+            active.lru.retain(|x| x != id);
+        }
+        self.store.delete_thread_full(id)?;
+        Ok(())
     }
 
     /// Resume a thread and recover the sub-agent rebind hints needed to
@@ -3191,6 +3299,119 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         .with_context(|| format!("Failed to write {}", path.display()))
 }
 
+/// Append a human-readable markdown trace of selected runtime events to
+/// `$workspace/verlauf.md`. Keeps the SQLite DB as source-of-truth and the
+/// markdown as a parallel, append-only narrative for humans to skim or feed
+/// into other tools.
+///
+/// Mirrored events (everything else is silently dropped):
+///   * `thread.started`     → H1 with thread id + model + workspace + timestamp
+///   * `turn.started`       → "## Turn N — {input_summary}" with timestamp
+///   * `item.completed` for
+///     - kind `user_message`     → `### You` block (verbatim text)
+///     - kind `agent_message`    → `### Strix` block (verbatim text)
+///     - kind `agent_reasoning`  → collapsed `<details>` block (skim-friendly)
+///     - kind `tool_call`        → `### Tool: <name>` block with output fence
+///   * `turn.completed`     → footer with usage counts
+fn mirror_to_markdown(workspace: &Path, ev: &RuntimeEventRecord) -> Result<()> {
+    let lines = match render_event_as_markdown(ev) {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(()),
+    };
+    let path = workspace.join("verlauf.md");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("Failed to open {}", path.display()))?;
+    file.write_all(lines.as_bytes())
+        .with_context(|| format!("Failed to append {}", path.display()))?;
+    Ok(())
+}
+
+fn render_event_as_markdown(ev: &RuntimeEventRecord) -> Option<String> {
+    let p = &ev.payload;
+    let ts = ev.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
+    match ev.event.as_str() {
+        "thread.started" => {
+            let thread = p.get("thread")?;
+            let model = thread.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+            let workspace = thread
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            Some(format!(
+                "\n\n---\n\n# Session {}\n\n* model: `{}`\n* workspace: `{}`\n* started: {}\n",
+                ev.thread_id, model, workspace, ts,
+            ))
+        }
+        "turn.started" => {
+            let turn = p.get("turn")?;
+            let input = turn
+                .get("input_summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no prompt)");
+            Some(format!("\n## Turn — {ts}\n\n*Input:* {input}\n\n"))
+        }
+        "item.completed" => {
+            let item = p.get("item")?;
+            let kind = item.get("kind")?.as_str()?;
+            let detail = item
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if detail.is_empty() {
+                return None;
+            }
+            match kind {
+                "user_message" => Some(format!("### You\n\n{detail}\n\n")),
+                "agent_message" => Some(format!("### Strix\n\n{detail}\n\n")),
+                "agent_reasoning" => Some(format!(
+                    "<details><summary>reasoning</summary>\n\n```text\n{detail}\n```\n\n</details>\n\n"
+                )),
+                "tool_call" => {
+                    let tool_name = item
+                        .get("metadata")
+                        .and_then(|m| m.get("tool_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool");
+                    let summary = item
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let head = if summary.is_empty() {
+                        format!("### Tool: `{tool_name}`")
+                    } else {
+                        format!("### Tool: `{tool_name}` — _{summary}_")
+                    };
+                    Some(format!("{head}\n\n```text\n{detail}\n```\n\n"))
+                }
+                _ => None,
+            }
+        }
+        "turn.completed" => {
+            let turn = p.get("turn")?;
+            let usage = turn.get("usage")?;
+            let inp = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let out = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let reas = usage
+                .get("reasoning_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let dur = turn
+                .get("duration_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            Some(format!(
+                "_— turn done in {dur}ms · in {inp} tok · out {out} tok · reasoning {reas} tok_\n\n"
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3330,15 +3551,11 @@ mod tests {
         let store = RuntimeThreadStore::open(dir.clone()).expect("open store");
 
         // Construct a thread record persisted with a future schema version.
+        // save_thread writes the schema_version verbatim, so loading must
+        // refuse it.
         let mut thread = sample_thread("thr_future");
         thread.schema_version = CURRENT_RUNTIME_SCHEMA_VERSION + 1;
-
-        // Bypass save_thread (which would respect our local schema_version)
-        // by writing the JSON directly so we can simulate a future writer.
-        let path = store.threads_dir.join(format!("{}.json", thread.id));
-        std::fs::create_dir_all(path.parent().unwrap()).expect("mkdirs");
-        let payload = serde_json::to_string(&thread).expect("serialize thread");
-        std::fs::write(&path, payload).expect("write thread");
+        store.save_thread(&thread).expect("save thread");
 
         let err = store
             .load_thread(&thread.id)
@@ -3395,11 +3612,7 @@ mod tests {
 
         let mut turn = sample_turn("thr_t", "trn_future", RuntimeTurnStatus::InProgress);
         turn.schema_version = CURRENT_RUNTIME_SCHEMA_VERSION + 1;
-
-        let path = store.turns_dir.join(format!("{}.json", turn.id));
-        std::fs::create_dir_all(path.parent().unwrap()).expect("mkdirs");
-        std::fs::write(&path, serde_json::to_string(&turn).expect("serialize turn"))
-            .expect("write turn");
+        store.save_turn(&turn).expect("save turn");
 
         let err = store
             .load_turn(&turn.id)
@@ -3419,11 +3632,7 @@ mod tests {
 
         let mut item = sample_item("trn_t", "itm_future", TurnItemLifecycleStatus::InProgress);
         item.schema_version = CURRENT_RUNTIME_SCHEMA_VERSION + 1;
-
-        let path = store.items_dir.join(format!("{}.json", item.id));
-        std::fs::create_dir_all(path.parent().unwrap()).expect("mkdirs");
-        std::fs::write(&path, serde_json::to_string(&item).expect("serialize item"))
-            .expect("write item");
+        store.save_item(&item).expect("save item");
 
         let err = store
             .load_item(&item.id)

@@ -1,0 +1,30 @@
+{
+  "Bewerbungsteam": {
+    "url": "https://docs.google.com/spreadsheets/d/1QadB5NRUKNhK2XpQkHvqs0Uh8H7Jk1KYaa6n2oUe2Y0/edit?usp=sharing",
+    "description": "Zentrale Bewerbungsdatenbank – Tab 'Bewerbungen' mit allen Agenten-Spalten"
+  },
+  "Intercepter": {
+    "url": "https://docs.google.com/spreadsheets/d/1lEn0GxyAJKwg-C_B7mwACSdFdW16E_RAtPbOb0NHsr0/edit?usp=sharing",
+    "description": ""
+  },
+  "Bewerbungs_Log": {
+    "url": "https://docs.google.com/spreadsheets/d/1Wa8kL5kiDuw-0XYqF2iuFqkItg7dhFNydBELwtJBKlI/edit?usp=sharing",
+    "description": "Bitte prüfe als erstes mal mit einer jason ob ein Tap namens Firmenurls vorhanden ist. wenn nicht erzeuge das Tap. Dann finde die erste frei Zeile in dem tab, suche ein interessante Firma im Bereich Elektrotechnik, und trage sie in die tabelle ein mit Name der firma url der Firma, geschäftsbereiche und dann noch eine kleine zusammenfassnde beschreibung was es ist."
+  },
+  "besteigen": {
+    "url": "",
+    "description": ""
+  },
+  "stuten_besteigen": {
+    "url": "https://docs.google.com/spreadsheets/d/1ABh87O-x2a52-v8dXu_XacUPjO0aDqRTSpKo2zBXKr4/edit?gid=0#gid=0",
+    "description": ""
+  },
+  "Gutachten": {
+    "url": "https://docs.google.com/spreadsheets/d/1sUvVmwvK91xMGZ-AfKWHAOgzoLkXPxLVkOG_Wb34NZ0/edit?usp=sharing",
+    "description": "Stellungname zum erziehngfähigkeitsgutachen Felsenhausen"
+  },
+  "Stellen_Kontakte": {
+    "url": "https://docs.google.com/spreadsheets/d/1ENBKRKjn3JBqXfFoey17uGX3P9u2S5550RbrDYiaSaI/edit?gid=0#gid=0",
+    "description": "Kontatdaten für bewerubnen und co"
+  }
+}

@@ -652,6 +652,13 @@ async fn run_event_loop(
     let mut shift_bypass_active = false;
     let mut terminal_paused_at: Option<Instant> = None;
     let mut force_terminal_repaint = false;
+    // FocusGained-Debounce: gnome-terminal/manche WMs feuern FocusGained
+    // mehrfach/sec bei Mouse-Hover ohne vorheriges FocusLost. Wir force-clearen
+    // nur, wenn vorher echtes FocusLost ankam — das ist die saubere Semantik
+    // für „App-Switch passierte wirklich". Plus 500ms-Mindestabstand als
+    // Bremse falls der WM doch FocusLost/Gained-Bursts schickt.
+    let mut pending_focus_recovery = false;
+    let mut last_focus_repaint: Option<Instant> = None;
 
     loop {
         if !drain_web_config_events(&mut web_config_session, app, config, &engine_handle).await {
@@ -669,11 +676,16 @@ async fn run_event_loop(
 
         // Hard-exit if startup inference failed completely (no quote produced).
         if let Some(ref err) = app.startup_hard_fail.clone() {
+            let log_path = std::env::var("OWLTRAIL_LOG")
+                .unwrap_or_else(|_| "/tmp/strix-owltrail.log".to_string());
+            let port = std::env::var("OWLTRAIL_PORT")
+                .unwrap_or_else(|_| "8081".to_string());
             return Err(anyhow::anyhow!(
                 "[strix] Modell nicht erreichbar: {}\n\
-                 → Prüfe: curl -sf http://127.0.0.1:8081/v1/models\n\
-                 → Log:   tail -20 /tmp/owltrail-adapter.log",
-                err
+                 → Adapter-Status: curl -sS http://127.0.0.1:{}/v1/models\n\
+                 → Adapter-Log:    tail -20 {}\n\
+                 → Konfiguration:  /etc/strix/owltrail.conf (server_ip, token)",
+                err, port, log_path
             ));
         }
         // If splash finished with a failed inference but quote was already shown,
@@ -1691,13 +1703,28 @@ async fn run_event_loop(
             // and (on macOS) can drop the keyboard, mouse-tracking, or
             // bracketed-paste modes — recover_terminal_modes() is the
             // canonical place those flags live.
+            if matches!(evt, Event::FocusLost) {
+                pending_focus_recovery = true;
+            }
             if terminal_event_needs_viewport_recapture(&evt) {
                 recover_terminal_modes(
                     terminal.backend_mut(),
                     app.use_mouse_capture,
                     app.use_bracketed_paste,
                 );
-                force_terminal_repaint = true;
+                // force-clear nur wenn vorher echtes FocusLost ankam UND der
+                // letzte force-clear > 500ms her ist. Hover-FocusGained-Bursts
+                // ohne FocusLost werden komplett geschluckt; recover_terminal_modes
+                // läuft trotzdem (billig, ein paar Escape-Codes).
+                let now = Instant::now();
+                let debounce_ok = last_focus_repaint
+                    .map(|t| now.duration_since(t) > Duration::from_millis(500))
+                    .unwrap_or(true);
+                if pending_focus_recovery && debounce_ok {
+                    force_terminal_repaint = true;
+                    last_focus_repaint = Some(now);
+                    pending_focus_recovery = false;
+                }
                 app.needs_redraw = true;
             }
             if let Event::Resize(width, height) = evt {
@@ -4331,6 +4358,7 @@ async fn apply_model_picker_choice(
         app.auto_model = model_is_auto;
         app.last_effective_model = None;
         app.model = model.clone();
+        app.active_preset_name = None;
         app.update_model_compaction_budget();
         app.clear_model_scoped_telemetry();
     }

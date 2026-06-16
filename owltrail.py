@@ -150,6 +150,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         # Alle anderen Endpunkte: direkt durchleiten
+        resp = None
         try:
             resp      = urllib.request.urlopen(req, timeout=timeout)
             status    = resp.status
@@ -191,8 +192,6 @@ class _Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
 
-            resp.close()
-
         except urllib.error.HTTPError as e:
             body_err = e.read()
             _logger.error("HTTP %d vom Backend: %s — %s", e.code, path, body_err[:200])
@@ -213,6 +212,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(msg)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     def _proxy_with_heartbeat(self, req, timeout, path):
         """POST /v1/chat/completions mit Heartbeat-SSE.
@@ -243,6 +248,7 @@ class _Handler(BaseHTTPRequestHandler):
         DONE    = object()
 
         def _fetch():
+            resp = None
             try:
                 resp = urllib.request.urlopen(req, timeout=timeout)
                 _logger.info("Backend antwortet (Status %d): %s", resp.status, path)
@@ -251,7 +257,6 @@ class _Handler(BaseHTTPRequestHandler):
                     if not chunk:
                         break
                     chunk_q.put(chunk)
-                resp.close()
             except urllib.error.HTTPError as e:
                 body_err = e.read()
                 _logger.error("HTTP %d vom Backend: %s — %s", e.code, path, body_err[:200])
@@ -261,6 +266,11 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 _logger.error("Backend-Fehler [%s]:\n%s", path, traceback.format_exc())
             finally:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
                 chunk_q.put(DONE)
 
         threading.Thread(target=_fetch, daemon=True).start()

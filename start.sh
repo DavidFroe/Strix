@@ -9,14 +9,24 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Rust auf grosse Platte (root-Partition / ist nur 20G, fast voll)
+export RUSTUP_HOME="${RUSTUP_HOME:-/home/david/Schreibtisch/Platte/rust/rustup}"
+export CARGO_HOME="${CARGO_HOME:-/home/david/Schreibtisch/Platte/rust/cargo}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/home/david/Schreibtisch/Platte/rust/strix-target}"
+export PATH="$CARGO_HOME/bin:$PATH"
+
 LOG="$SCRIPT_DIR/owltrail.log"
 PORT="${OWLTRAIL_PORT:-8081}"
 HOST="127.0.0.1"
 URL="http://$HOST:$PORT/v1/models"
 
-BIN="$SCRIPT_DIR/target/release/strix"
+BIN="$CARGO_TARGET_DIR/release/strix"
 if [ ! -x "$BIN" ]; then
-    BIN="$SCRIPT_DIR/target/x86_64-unknown-linux-musl/release/strix"
+    BIN="$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/strix"
+fi
+# Fallback auf alten in-tree target/ falls jemand ohne CARGO_TARGET_DIR baute
+if [ ! -x "$BIN" ]; then
+    BIN="$SCRIPT_DIR/target/release/strix"
 fi
 if [ ! -x "$BIN" ]; then
     echo "[stuck/start.sh] FEHLER: kein gebautes propeller-Binary gefunden." >&2

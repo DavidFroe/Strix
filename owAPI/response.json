@@ -1,0 +1,27 @@
+{
+  "protocol_version": "1.0.0",
+  "status": "error",
+  "data": {},
+  "raw": {
+    "text_excerpt": "",
+    "json_blocks_found": 0,
+    "timings": {
+      "read_prompt_ms": 1,
+      "chrome_boot_ms": 814,
+      "cdp_connect_ms": 175,
+      "open_chat_ms": 636,
+      "ensure_composer_ms": 199,
+      "websearch_dom_ms": 2143,
+      "websearch_mouse_ms": 13499
+    }
+  },
+  "events": [
+    {
+      "t": "2025-09-16T19:05:28Z",
+      "e": "composer_focused"
+    }
+  ],
+  "errors": [
+    "Composer nicht fokussierbar."
+  ]
+}

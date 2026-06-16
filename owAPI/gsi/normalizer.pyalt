@@ -1,0 +1,40 @@
+from __future__ import annotations
+from typing import Any, Dict, List
+
+def coerce_incoming_payload(update_data: Dict[str, Any], headers: List[str] | None,
+                            diagnostics: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if "help" not in update_data:
+        update_data["help"] = False
+        diagnostics.append({"level":"info","code":"help_default_false","message":"Feld 'help' fehlte – auf false gesetzt."})
+
+    if "updates" in update_data and "actions" not in update_data:
+        acts = []
+        conv = 0
+        for item in update_data.get("updates", []):
+            a = dict(item)
+            if "action" in a and "type" not in a:
+                a["type"] = a.pop("action"); conv += 1
+            acts.append(a)
+        update_data["actions"] = acts
+        diagnostics.append({"level":"info","code":"updates_to_actions","message":f"{len(acts)} Einträge aus 'updates' übernommen; {conv}x 'action'→'type'."})
+
+    if headers and "actions" in update_data:
+        fixed = []
+        for idx, a in enumerate(update_data["actions"]):
+            if isinstance(a.get("values"), list):
+                vals = a["values"]
+                if len(vals) != len(headers):
+                    diagnostics.append({
+                        "level":"error","code":"values_length_mismatch",
+                        "message": f"Action {idx}: Länge values[{len(vals)}] ≠ Header[{len(headers)}].",
+                        "hint":"Sende values als Objekt mit Spaltennamen ODER gleiche Länge wie Header.",
+                        "expected_header": headers
+                    })
+                    fixed.append(a); continue
+                a = dict(a)
+                a["values"] = {headers[i]: vals[i] for i in range(len(headers))}
+                diagnostics.append({"level":"info","code":"values_list_to_object","message": f"Action {idx}: values[] → Objekt anhand Header gemappt."})
+            fixed.append(a)
+        update_data["actions"] = fixed
+
+    return update_data

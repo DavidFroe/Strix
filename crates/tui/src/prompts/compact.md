@@ -1,6 +1,14 @@
-## Compaction Handoff
+## Compaction Handoff (Template — only relevant when the user invokes `/compact`)
 
-The conversation above this point has been compacted. Below is a structured summary of what was discussed and decided. Read this first — it replaces re-reading the compressed transcript.
+**Do NOT volunteer this summary unsolicited.** This block is the *format
+specification* the assistant must use when — and only when — the user runs
+the `/compact` command. Outside of that command, ignore this section and
+treat the visible conversation as the live transcript. **Never tell the
+user that the conversation has been compacted unless you actually compacted
+it on this turn.**
+
+When `/compact` IS invoked, write the resulting summary in this shape into
+`.deepseek/handoff.md`:
 
 ### Goal
 [The user's high-level objective for this session]

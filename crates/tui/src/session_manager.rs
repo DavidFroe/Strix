@@ -584,12 +584,24 @@ fn find_git_root(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Resolve the default session directory path (`~/.deepseek/sessions`).
+/// Resolve the default session directory.
+///
+/// **Per-workdir** by default: `$cwd/sessions/`. Each project keeps its
+/// own conversation history right next to the code it touches; nothing
+/// gets persisted in `~/.deepseek/` anymore.
+///
+/// Overrides:
+///   * `STRIX_SESSIONS_DIR` env var — explicit absolute path (CI, testing,
+///     shared setups).
 pub fn default_sessions_dir() -> std::io::Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
-    })?;
-    Ok(home.join(".deepseek").join("sessions"))
+    if let Ok(override_dir) = std::env::var("STRIX_SESSIONS_DIR") {
+        let trimmed = override_dir.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    let cwd = std::env::current_dir()?;
+    Ok(cwd.join("sessions"))
 }
 
 /// Prune snapshots older than `max_age` for `workspace`.

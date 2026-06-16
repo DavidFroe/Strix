@@ -372,10 +372,25 @@ pub async fn run_http_server(
         config.default_text_model.clone(),
         Some(options.workers),
     );
+    // Default-Pfad für die SQLite-DB: das Workspace-Verzeichnis. Damit
+    // entsteht beim `strix serve --http` automatisch eine `verlauf.db` im
+    // cwd — wie vom Web-UI-Design vorgesehen. DEEPSEEK_RUNTIME_DIR
+    // überschreibt das weiterhin (Tests, geteilte Setups).
+    let runtime_data_dir = if std::env::var("DEEPSEEK_RUNTIME_DIR")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        // from_task_data_dir liest die env var selbst aus.
+        RuntimeThreadManagerConfig::from_task_data_dir(task_cfg.data_dir.clone())
+    } else {
+        let mut cfg = RuntimeThreadManagerConfig::from_task_data_dir(task_cfg.data_dir.clone());
+        cfg.data_dir = workspace.clone();
+        cfg
+    };
     let runtime_threads = Arc::new(RuntimeThreadManager::open(
         config.clone(),
         workspace.clone(),
-        RuntimeThreadManagerConfig::from_task_data_dir(task_cfg.data_dir.clone()),
+        runtime_data_dir,
     )?);
     let task_manager =
         TaskManager::start_with_runtime_manager(task_cfg, config.clone(), runtime_threads.clone())
@@ -485,7 +500,7 @@ pub fn build_router(state: RuntimeApiState) -> Router {
         .route("/v1/stream", post(stream_turn))
         .route("/v1/threads", get(list_threads).post(create_thread))
         .route("/v1/threads/summary", get(list_threads_summary))
-        .route("/v1/threads/{id}", get(get_thread).patch(update_thread))
+        .route("/v1/threads/{id}", get(get_thread).patch(update_thread).delete(delete_thread))
         .route("/v1/threads/{id}/resume", post(resume_thread))
         .route("/v1/threads/{id}/fork", post(fork_thread))
         .route("/v1/threads/{id}/turns", post(start_thread_turn))
@@ -530,9 +545,80 @@ pub fn build_router(state: RuntimeApiState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/runtime/info", get(runtime_info))
+        .route("/v1/models", get(proxy_models))
+        .route("/", get(serve_ui))
+        .route("/ui", get(serve_ui))
         .merge(api_routes)
         .layer(cors_layer(&state.cors_origins))
         .with_state(state)
+}
+
+/// Single-file web UI embedded into the binary at compile time.
+/// Reachable via GET / and GET /ui — no auth (designed to be paired with
+/// `--insecure` for local development; behind a token it currently still
+/// loads the shell but XHR calls will 401).
+///
+/// `Cache-Control: no-store` damit Browser bei jedem Reload die aktuelle
+/// HTML-Version vom Server holen — beim raschen Iterieren am UI sonst
+/// extrem frustrierend.
+async fn serve_ui() -> Response {
+    // Build-Stamp wird zur Compile-Zeit in das HTML eingesetzt — so kann der
+    // User im Browser-Header verifizieren, dass er die aktuelle Version sieht
+    // (nicht eine Cache-Leiche).
+    let build_nr = env!("STRIX_BUILD_NUMBER", "0");
+    let stamp = format!(
+        "Strix v{} · build {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("STRIX_BUILD_STAMP", "unknown"),
+    );
+    let html = include_str!("../webui/index.html")
+        .replace("<!--STRIX_VERSION_STAMP-->", &stamp)
+        .replace("<title>Strix Web UI</title>", &format!("<title>Strix #{build_nr}</title>"));
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate, max-age=0"),
+            (header::PRAGMA, "no-cache"),
+            (header::EXPIRES, "0"),
+            // ETag ändert sich pro Build → Browser invalidieren Cache automatisch
+            (header::ETAG, concat!("\"strix-b", env!("STRIX_BUILD_NUMBER", "0"), "\"")),
+        ],
+        html,
+    )
+        .into_response()
+}
+
+/// Pass-through proxy for the upstream provider's `/models` endpoint. The
+/// strix HTTP server reaches it via `config.deepseek_base_url()` (typically
+/// the local owltrail adapter on 127.0.0.1), and forwards the raw JSON to
+/// the caller. Lets the web UI fetch the model list from its own origin
+/// without needing the owltrail port to be VPN-reachable.
+async fn proxy_models(State(state): State<RuntimeApiState>) -> Response {
+    let base = state.config.deepseek_base_url();
+    let url = format!("{}/models", base.trim_end_matches('/'));
+    match reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            let bytes = resp.bytes().await.unwrap_or_default();
+            (
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
+                [(header::CONTENT_TYPE, "application/json")],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            [(header::CONTENT_TYPE, "application/json")],
+            format!("{{\"error\":\"upstream models fetch failed: {e}\"}}"),
+        )
+            .into_response(),
+    }
 }
 
 async fn require_runtime_token(
@@ -1188,6 +1274,18 @@ async fn resume_thread(
         .await
         .map_err(map_thread_err)?;
     Ok(Json(thread))
+}
+
+async fn delete_thread(
+    State(state): State<RuntimeApiState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .runtime_threads
+        .delete_thread(&id)
+        .await
+        .map_err(map_thread_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn fork_thread(

@@ -1,0 +1,39 @@
+{
+  "protocol_version": "1.0.0",
+  "conversation": {
+    "new_chat": true,
+    "temporary_chat": false,
+    "enable_web_search": true
+  },
+  "ui": {
+    "dom_first": true,
+    "absolute": {
+      "composer_xy": [
+        1000,
+        536
+      ],
+      "plus_xy": [
+        630,
+        530
+      ],
+      "more_xy": [
+        700,
+        780
+      ],
+      "web_xy": [
+        1000,
+        780
+      ]
+    }
+  },
+  "wait": {
+    "expect_json_codeblock": true,
+    "max_wait_s": 120,
+    "settle_s": 0.6
+  },
+  "message": "Du bist ein Job-Rechercheur. Nutze (falls verfügbar) Web search und antworte AUSSCHLIESSLICH mit EINEM JSON-Codeblock (Schema v1).\nProfil: Firma=ACME Corp | Stelle=Embedded Engineer | Ort/Remote=Remote.\nFalls exakt nicht vorhanden: fachlich nächstliegend (Embedded/Elektronik/HV/Wehrtechnik/Automotive/Sensorik/FPGA/VHDL/C/Matlab).\nPrüfe öffentliche Erreichbarkeit. Liefere bei Erfolg decision='finish' + web_findings[0].url; sonst decision='retry'. Hints: target_row=2, target_header='Stellenausschreibung_URL'.",
+  "meta": {
+    "task_id": "search-one-example",
+    "context": {}
+  }
+}

@@ -293,6 +293,33 @@ enum Commands {
         #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
         last: bool,
     },
+    /// Inspect or export the local conversation database (verlauf.db)
+    Verlauf {
+        #[command(subcommand)]
+        command: VerlaufCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum VerlaufCommand {
+    /// Export the entire conversation history as JSON (threads ▸ turns ▸ items + event log)
+    Export {
+        /// Output path (use `-` for stdout)
+        #[arg(value_name = "OUTPUT")]
+        output: String,
+        /// Path to verlauf.db (default: ./verlauf.db in current directory)
+        #[arg(long, value_name = "DB")]
+        db: Option<PathBuf>,
+        /// Pretty-print JSON output
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
+    },
+    /// Print a one-line summary per thread in the database
+    List {
+        /// Path to verlauf.db (default: ./verlauf.db)
+        #[arg(long, value_name = "DB")]
+        db: Option<PathBuf>,
+    },
 }
 
 #[derive(Args, Debug, Clone)]
@@ -840,6 +867,7 @@ async fn main() -> Result<()> {
                 let new_session_id = fork_session(session_id, last, &workspace)?;
                 run_interactive(&cli, &config, Some(new_session_id), None).await
             }
+            Commands::Verlauf { command } => run_verlauf_command(command),
         };
     }
 
@@ -851,20 +879,36 @@ async fn main() -> Result<()> {
         return run_one_shot(&config, &model, &prompt).await;
     }
 
-    // Handle session resume. Plain `deepseek` starts fresh: interrupted
-    // snapshots are preserved for explicit resume, but never auto-attached.
-    let resume_session_id = if cli.continue_session {
+    // Session-Resolution für `strix` (interaktive TUI):
+    //   * --resume <id>      → explizit diese Session
+    //   * --fresh            → neue Session (keine Auto-Continue)
+    //   * --continue (-c)    → jüngste Session in diesem Workdir
+    //                          (mit Interrupt-Checkpoint-Recovery)
+    //   * (nichts)           → **Default: Auto-Continue**, falls in
+    //                          $cwd/sessions/ eine existiert. Sonst frisch.
+    //
+    // Verhalten: Sessions liegen seit Task #2 pro-Workdir
+    // ($cwd/sessions/). Ein bloßes `strix` setzt da fort wo man aufgehört
+    // hat — wie ein normales File-Editor das eine alte Datei wieder öffnet.
+    let resume_session_id = if let Some(id) = cli.resume.clone() {
+        Some(id)
+    } else if cli.fresh {
+        None
+    } else if cli.continue_session {
         let workspace = resolve_workspace(&cli);
         recover_interrupted_checkpoint_for_resume(&workspace)
             .or_else(|| latest_session_id_for_workspace(&workspace).ok().flatten())
-    } else if let Some(id) = cli.resume.clone() {
-        Some(id)
-    } else if !cli.fresh {
+    } else {
+        // Default-Pfad: jüngste Session in diesem Workdir nehmen (falls
+        // vorhanden). Genauso wie --continue, aber implizit beim plainen
+        // `strix`. preserve_interrupted_checkpoint_for_explicit_resume
+        // wird trotzdem aufgerufen, damit ein unterbrochener
+        // Checkpoint nicht verloren geht falls der User später
+        // explizit --continue tippt.
         let workspace = resolve_workspace(&cli);
         preserve_interrupted_checkpoint_for_explicit_resume(&workspace);
-        None
-    } else {
-        None
+        recover_interrupted_checkpoint_for_resume(&workspace)
+            .or_else(|| latest_session_id_for_workspace(&workspace).ok().flatten())
     };
 
     // Default: Interactive TUI
@@ -2570,6 +2614,157 @@ fn run_execpolicy_command(command: ExecpolicyCommand) -> Result<()> {
     }
 }
 
+fn run_verlauf_command(command: VerlaufCommand) -> Result<()> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let (db_arg, do_export) = match &command {
+        VerlaufCommand::Export { db, .. } => (db.clone(), true),
+        VerlaufCommand::List { db } => (db.clone(), false),
+    };
+    let db_path = db_arg.unwrap_or_else(|| PathBuf::from("./verlauf.db"));
+    if !db_path.exists() {
+        bail!(
+            "verlauf.db not found at {}. Run strix-server in this directory first.",
+            db_path.display()
+        );
+    }
+    let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("Failed to open {}", db_path.display()))?;
+
+    if !do_export {
+        // List mode: one line per thread.
+        let mut stmt = conn.prepare(
+            "SELECT id, json FROM threads ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let id: String = r.get(0)?;
+            let json: String = r.get(1)?;
+            Ok((id, json))
+        })?;
+        let mut count = 0usize;
+        for row in rows {
+            let (id, json) = row?;
+            let v: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+            let model = v
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let updated = v
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let turn_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM turns WHERE thread_id = ?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            println!("{updated}  {id}  model={model}  turns={turn_count}");
+            count += 1;
+        }
+        if count == 0 {
+            println!("(no threads yet — start a session via `strix-server` first)");
+        }
+        return Ok(());
+    }
+
+    // Export mode: serialize all threads with their turns + items + events.
+    let VerlaufCommand::Export {
+        output, pretty, ..
+    } = command else {
+        unreachable!();
+    };
+    let mut threads_out: Vec<serde_json::Value> = Vec::new();
+
+    let mut tstmt = conn.prepare("SELECT id, json FROM threads ORDER BY updated_at ASC")?;
+    let thread_rows = tstmt
+        .query_map([], |r| {
+            let id: String = r.get(0)?;
+            let json: String = r.get(1)?;
+            Ok((id, json))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for (tid, tjson) in thread_rows {
+        let mut tval: serde_json::Value =
+            serde_json::from_str(&tjson).unwrap_or(serde_json::Value::Null);
+
+        // Attach turns + nested items.
+        let mut turns_out: Vec<serde_json::Value> = Vec::new();
+        let mut turns_stmt = conn.prepare(
+            "SELECT id, json FROM turns WHERE thread_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let turn_rows = turns_stmt
+            .query_map(rusqlite::params![tid], |r| {
+                let id: String = r.get(0)?;
+                let json: String = r.get(1)?;
+                Ok((id, json))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        for (turn_id, turn_json) in turn_rows {
+            let mut tu: serde_json::Value =
+                serde_json::from_str(&turn_json).unwrap_or(serde_json::Value::Null);
+
+            let mut items_stmt = conn.prepare(
+                "SELECT json FROM items WHERE turn_id = ?1
+                 ORDER BY (started_at IS NULL), started_at ASC",
+            )?;
+            let items: Vec<serde_json::Value> = items_stmt
+                .query_map(rusqlite::params![turn_id], |r| {
+                    let j: String = r.get(0)?;
+                    Ok(serde_json::from_str::<serde_json::Value>(&j)
+                        .unwrap_or(serde_json::Value::Null))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            if let serde_json::Value::Object(ref mut m) = tu {
+                m.insert("items".to_string(), serde_json::Value::Array(items));
+            }
+            turns_out.push(tu);
+        }
+
+        // Attach event log too — useful for full forensic exports.
+        let mut events_stmt =
+            conn.prepare("SELECT json FROM events WHERE thread_id = ?1 ORDER BY seq ASC")?;
+        let events: Vec<serde_json::Value> = events_stmt
+            .query_map(rusqlite::params![tid], |r| {
+                let j: String = r.get(0)?;
+                Ok(serde_json::from_str::<serde_json::Value>(&j)
+                    .unwrap_or(serde_json::Value::Null))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        if let serde_json::Value::Object(ref mut m) = tval {
+            m.insert("turns".to_string(), serde_json::Value::Array(turns_out));
+            m.insert("events".to_string(), serde_json::Value::Array(events));
+        }
+        threads_out.push(tval);
+    }
+
+    let root = serde_json::json!({
+        "schema": "strix-verlauf",
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "db_path": db_path.display().to_string(),
+        "threads": threads_out,
+    });
+
+    let payload = if pretty {
+        serde_json::to_string_pretty(&root)?
+    } else {
+        serde_json::to_string(&root)?
+    };
+
+    if output == "-" {
+        println!("{payload}");
+    } else {
+        std::fs::write(&output, payload)
+            .with_context(|| format!("Failed to write {output}"))?;
+        eprintln!("Exported {} threads to {output}", threads_out.len());
+    }
+
+    Ok(())
+}
+
 fn run_features_command(config: &Config, command: FeaturesCli) -> Result<()> {
     match command.command {
         FeaturesSubcommand::List => {
@@ -2619,7 +2814,13 @@ async fn test_api_connectivity(config: &Config) -> Result<()> {
     let client = DeepSeekClient::new(config)?;
     let model = client.model().to_string();
 
-    // Minimal request: single word prompt, 1 max token
+    // Connectivity-Probe. max_tokens MUSS groß genug sein, damit
+    // Reasoning-Modelle (DeepSeek-Pro, PropellerA u.a., die im owl-Stack
+    // reasoning_content erzeugen das gegen max_tokens zählt) überhaupt
+    // einen Content-Token rausschicken. Mit max_tokens=1 verbrennt das
+    // Reasoning das ganze Budget und der Client sieht "Leere Modellantwort".
+    // 512 ist großzügig genug für jeden Reasoning-Floor und der Test bleibt
+    // unter 5s bei Standard-Modellen.
     let request = MessageRequest {
         model: model.clone(),
         messages: vec![Message {
@@ -2629,7 +2830,7 @@ async fn test_api_connectivity(config: &Config) -> Result<()> {
                 cache_control: None,
             }],
         }],
-        max_tokens: 1,
+        max_tokens: 512,
         system: None,
         tools: None,
         tool_choice: None,
@@ -2641,12 +2842,13 @@ async fn test_api_connectivity(config: &Config) -> Result<()> {
         top_p: None,
     };
 
-    // Use tokio timeout to catch hanging requests
-    let timeout_duration = std::time::Duration::from_secs(15);
+    // Großzügiger Timeout (30s) — DeepSeek-Pro mit Thinking braucht
+    // 3–5s, PropellerA Cold-Start gerne mal 15s+.
+    let timeout_duration = std::time::Duration::from_secs(30);
     match tokio::time::timeout(timeout_duration, client.create_message(request)).await {
         Ok(Ok(_response)) => Ok(()),
         Ok(Err(e)) => Err(e),
-        Err(_) => anyhow::bail!("Request timeout after 15 seconds"),
+        Err(_) => anyhow::bail!("Request timeout after 30 seconds"),
     }
 }
 

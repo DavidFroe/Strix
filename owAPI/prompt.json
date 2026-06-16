@@ -1,0 +1,39 @@
+{
+  "protocol_version": "1.0.0",
+  "conversation": {
+    "new_chat": true,
+    "temporary_chat": false,
+    "enable_web_search": true
+  },
+  "ui": {
+    "dom_first": true,
+    "absolute": {
+      "composer_xy": [
+        1000,
+        536
+      ],
+      "plus_xy": [
+        630,
+        530
+      ],
+      "more_xy": [
+        768,
+        768
+      ],
+      "web_xy": [
+        1051,
+        768
+      ]
+    }
+  },
+  "wait": {
+    "expect_json_codeblock": true,
+    "max_wait_s": 90,
+    "settle_s": 0.4
+  },
+  "message": "Kannst du dieses Google Sheet grundsätzlich öffnen? Antworte NUR im SCHEMA v1:\n- sheet_url: https://docs.google.com/spreadsheets/d/1Wa8kL5kiDuw-0XYqF2iuFqkItg7dhFNydBELwtJBKlI/edit?usp=sharing\n- worksheet_hint: 'Anwalt Log' (nur als Hinweis)\n- decision: 'ask_followup'\n- message: 1 kurzer Satz zur Sichtbarkeit (kein Freitext danach)\n- hints: {\"can_access\": true|false}\n- KEINE weiteren Felder nutzen.",
+  "meta": {
+    "task_id": "visibility_check",
+    "context": {}
+  }
+}

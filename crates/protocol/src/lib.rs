@@ -141,6 +141,16 @@ pub enum ThreadRequest {
     Create {
         #[serde(default)]
         metadata: Value,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        auto_approve: Option<bool>,
+        #[serde(default)]
+        allow_shell: Option<bool>,
+        #[serde(default)]
+        trust_mode: Option<bool>,
     },
     Start(ThreadStartParams),
     Resume(ThreadResumeParams),

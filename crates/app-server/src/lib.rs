@@ -475,6 +475,11 @@ async fn dispatch_stdio_request(
                 state,
                 ThreadRequest::Create {
                     metadata: parsed.metadata,
+                    model: None,
+                    mode: None,
+                    auto_approve: None,
+                    allow_shell: None,
+                    trust_mode: None,
                 },
             )
             .await?;

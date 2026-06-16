@@ -21,5 +21,5 @@ Tipp: Im Plan-Modus passiert nichts Reales — sicher zum Vordenken
 Tipp: Yolo-Modus = Auto-Approve, fragt bei nichts nach
 Tipp: Strix kann auch Bilder lesen — einfach reinpasten
 Tipp: Ctrl+E öffnet den externen Editor für lange Eingaben
-Tipp: '/compact' fasst alte Turns zusammen wenn Kontext voll wird
+Tipp: '/compress' komprimiert die Session (Default-Modell: free) — speichert als neue Datei in sessions/
 Tipp: '/help' zeigt alle Tastenkombinationen
